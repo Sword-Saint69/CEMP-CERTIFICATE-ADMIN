@@ -488,20 +488,28 @@
             window.certificateCanvas = canvas;
         }
 
-        // Position text elements correctly after image loads
+        // Enhanced percentage-based positioning system
         function positionTextElements(canvas, textBoxes, img) {
             if (!img) return;
 
-            // Wait a bit for the image to fully render
+            // Wait for image to fully render
             setTimeout(() => {
                 // Get the actual displayed image dimensions
                 const imgRect = img.getBoundingClientRect();
                 const actualWidth = imgRect.width;
                 const actualHeight = imgRect.height;
+                const naturalWidth = img.naturalWidth;
+                const naturalHeight = img.naturalHeight;
 
-                console.log('Image dimensions:', actualWidth, 'x', actualHeight);
+                console.log('Display dimensions:', actualWidth, 'x', actualHeight);
+                console.log('Natural dimensions:', naturalWidth, 'x', naturalHeight);
 
-                // Position each text element using percentage-based positioning
+                // Calculate scaling factors for more precise positioning
+                const scaleX = actualWidth / naturalWidth;
+                const scaleY = actualHeight / naturalHeight;
+                const uniformScale = Math.min(scaleX, scaleY); // Use uniform scaling for consistency
+
+                // Position each text element using enhanced percentage-based positioning
                 textBoxes.forEach(textBox => {
                     const textDiv = canvas.querySelector(`div[data-field="${textBox.field}"]`);
                     if (textDiv) {
@@ -510,31 +518,38 @@
                         const originalTop = parseInt(textDiv.getAttribute('data-original-top'));
                         const originalWidth = parseInt(textDiv.getAttribute('data-original-width'));
                         const originalHeight = parseInt(textDiv.getAttribute('data-original-height'));
+                        const originalFontSize = parseInt(textDiv.getAttribute('data-original-font-size'));
 
                         console.log('Text field:', textBox.field, 'Original pos:', originalLeft, originalTop);
 
-                        // Calculate positions as percentages of the image size
-                        const leftPercent = (originalLeft / 800) * 100; // Assuming 800px template width
-                        const topPercent = (originalTop / 600) * 100;   // Assuming 600px template height
-                        const widthPercent = (originalWidth / 800) * 100;
-                        const heightPercent = (originalHeight / 600) * 100;
+                        // Enhanced percentage calculation using natural image dimensions
+                        const leftPercent = (originalLeft / naturalWidth) * 100;
+                        const topPercent = (originalTop / naturalHeight) * 100;
+                        const widthPercent = (originalWidth / naturalWidth) * 100;
+                        const heightPercent = (originalHeight / naturalHeight) * 100;
 
-                        // Apply percentage-based positioning
+                        // Apply enhanced percentage-based positioning
                         textDiv.style.left = leftPercent + '%';
                         textDiv.style.top = topPercent + '%';
                         textDiv.style.width = widthPercent + '%';
                         textDiv.style.height = heightPercent + '%';
 
-                        // Scale font size based on image width
-                        const originalFontSize = parseInt(textDiv.getAttribute('data-original-font-size'));
-                        const scaleFactor = actualWidth / 800; // Scale based on width
-                        const scaledFontSize = Math.max(originalFontSize * scaleFactor, 8); // Minimum 8px
+                        // Enhanced font scaling with better precision
+                        const scaledFontSize = Math.max(originalFontSize * uniformScale, 8);
                         textDiv.style.fontSize = scaledFontSize + 'px';
 
-                        console.log('Positioned:', textBox.field, 'at', leftPercent + '%', topPercent + '%');
+                        // Add additional positioning data for debugging
+                        textDiv.setAttribute('data-calculated-left', leftPercent);
+                        textDiv.setAttribute('data-calculated-top', topPercent);
+                        textDiv.setAttribute('data-calculated-width', widthPercent);
+                        textDiv.setAttribute('data-calculated-height', heightPercent);
+                        textDiv.setAttribute('data-scaled-font-size', scaledFontSize);
+
+                        console.log('Enhanced positioning:', textBox.field, 'at', leftPercent.toFixed(2) + '%', topPercent.toFixed(2) + '%');
+                        console.log('Font size:', scaledFontSize + 'px');
                     }
                 });
-            }, 100); // Small delay to ensure image is fully rendered
+            }, 150); // Slightly longer delay for better image rendering
         }
 
         // Show error state
@@ -602,7 +617,7 @@
                 clonedImg.style.objectPosition = 'center';
             }
             
-            // Reposition text elements for download using actual image dimensions
+            // Enhanced percentage-based positioning for download
             const textElements = certificateClone.querySelectorAll('[data-field]');
             textElements.forEach(textDiv => {
                 const originalLeft = parseInt(textDiv.getAttribute('data-original-left'));
@@ -611,26 +626,28 @@
                 const originalHeight = parseInt(textDiv.getAttribute('data-original-height'));
                 const originalFontSize = parseInt(textDiv.getAttribute('data-original-font-size') || '12');
                 
-                // Calculate positions based on actual image dimensions
-                const scaleX = imgWidth / 800; // Scale factor for width
-                const scaleY = imgHeight / 600; // Scale factor for height
+                // Enhanced percentage calculation using natural image dimensions
+                const leftPercent = (originalLeft / imgWidth) * 100;
+                const topPercent = (originalTop / imgHeight) * 100;
+                const widthPercent = (originalWidth / imgWidth) * 100;
+                const heightPercent = (originalHeight / imgHeight) * 100;
                 
-                const scaledLeft = originalLeft * scaleX;
-                const scaledTop = originalTop * scaleY;
-                const scaledWidth = originalWidth * scaleX;
-                const scaledHeight = originalHeight * scaleY;
-                const scaledFontSize = originalFontSize * Math.min(scaleX, scaleY);
+                // Apply enhanced percentage-based positioning for download
+                textDiv.style.left = leftPercent + '%';
+                textDiv.style.top = topPercent + '%';
+                textDiv.style.width = widthPercent + '%';
+                textDiv.style.height = heightPercent + '%';
                 
-                // Apply scaled positions for download
-                textDiv.style.left = scaledLeft + 'px';
-                textDiv.style.top = scaledTop + 'px';
-                textDiv.style.width = scaledWidth + 'px';
-                textDiv.style.height = scaledHeight + 'px';
+                // Enhanced font scaling for download
+                const uniformScale = 1; // For download, use 1:1 scale
+                const scaledFontSize = Math.max(originalFontSize * uniformScale, 8);
                 textDiv.style.fontSize = scaledFontSize + 'px';
                 
                 // Remove debugging borders for download
                 textDiv.style.border = 'none';
                 textDiv.style.backgroundColor = 'transparent';
+                
+                console.log('Download positioning:', textDiv.getAttribute('data-field'), 'at', leftPercent.toFixed(2) + '%', topPercent.toFixed(2) + '%');
             });
             
             tempContainer.appendChild(certificateClone);

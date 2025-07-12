@@ -529,21 +529,24 @@
                                                     <label class="form-label">Position & Size</label>
                                                     <div class="row g-2">
                                                         <div class="col-6">
-                                                            <label for="leftPos" class="form-label">Left</label>
+                                                            <label for="leftPos" class="form-label">Left (px)</label>
                                                             <input type="number" class="form-control" id="leftPos">
                                                         </div>
                                                         <div class="col-6">
-                                                            <label for="topPos" class="form-label">Top</label>
+                                                            <label for="topPos" class="form-label">Top (px)</label>
                                                             <input type="number" class="form-control" id="topPos">
                                                         </div>
                                                         <div class="col-6">
-                                                            <label for="width" class="form-label">Width</label>
+                                                            <label for="width" class="form-label">Width (px)</label>
                                                             <input type="number" class="form-control" id="width">
                                                         </div>
                                                         <div class="col-6">
-                                                            <label for="height" class="form-label">Height</label>
+                                                            <label for="height" class="form-label">Height (px)</label>
                                                             <input type="number" class="form-control" id="height">
                                                         </div>
+                                                    </div>
+                                                    <div id="percentDisplay" class="mt-2">
+                                                        <small class="text-muted">Drag text box to see percentage position</small>
                                                     </div>
                                                 </div>
                                                 <div class="d-grid gap-2">
@@ -998,6 +1001,7 @@
         let itemsPerPage = 10;
         let totalCertificates = 0;
         let certificatesData = [];
+        let isDragging = false;
 
         // DOM Elements
         const certificateImg = document.getElementById('certificateImg');
@@ -1527,7 +1531,7 @@
             showAlert('Text box added', 'success');
         }
 
-        // Create a text box element
+        // Enhanced text box creation with precise positioning
         function createTextBox(textBoxData) {
             const textBox = document.createElement('div');
             textBox.className = 'text-box';
@@ -1542,6 +1546,11 @@
             // Set font properties
             textBox.style.fontFamily = textBoxData.style === 1 ? 'cursive' : 'Poppins, sans-serif';
             textBox.style.fontSize = `${textBoxData.font_size}px`;
+
+            // Enhanced visual feedback
+            textBox.style.cursor = 'grab';
+            textBox.style.transition = 'all 0.2s ease';
+            textBox.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
 
             // Store data in the element
             textBox.dataset.field = textBoxData.field;
@@ -1560,15 +1569,29 @@
                 selectTextBox(textBox);
             });
 
+            // Add hover effects
+            textBox.addEventListener('mouseenter', () => {
+                if (!isDragging) {
+                    textBox.style.transform = 'scale(1.02)';
+                    textBox.style.boxShadow = '0 4px 8px rgba(0,0,0,0.2)';
+                }
+            });
+
+            textBox.addEventListener('mouseleave', () => {
+                textBox.style.transform = 'scale(1)';
+                textBox.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
+            });
+
             // Add to textBoxes array
             textBoxes.push(textBoxData);
 
             return textBox;
         }
 
-        // Make a text box draggable
+        // Enhanced draggable text box with precise positioning
         function makeTextBoxDraggable(textBox) {
             let offsetX, offsetY, isDragging = false;
+            let startX, startY;
 
             textBox.addEventListener('mousedown', (e) => {
                 e.preventDefault();
@@ -1576,7 +1599,13 @@
                 const rect = textBox.getBoundingClientRect();
                 offsetX = e.clientX - rect.left;
                 offsetY = e.clientY - rect.top;
+                startX = e.clientX;
+                startY = e.clientY;
                 isDragging = true;
+
+                // Add visual feedback
+                textBox.style.cursor = 'grabbing';
+                textBox.style.zIndex = '1000';
 
                 // Add the mousemove and mouseup event listeners
                 document.addEventListener('mousemove', onMouseMove);
@@ -1587,21 +1616,45 @@
                 if (!isDragging) return;
 
                 const canvasRect = canvasElement.getBoundingClientRect();
-                const x = e.clientX - canvasRect.left - offsetX;
-                const y = e.clientY - canvasRect.top - offsetY;
+                const img = canvasElement.querySelector('img');
+                
+                if (!img) return;
 
-                // Constrain to canvas
-                const newX = Math.max(0, Math.min(canvasRect.width - textBox.offsetWidth, x));
-                const newY = Math.max(0, Math.min(canvasRect.height - textBox.offsetHeight, y));
+                // Get image dimensions
+                const imgRect = img.getBoundingClientRect();
+                const imgWidth = img.naturalWidth;
+                const imgHeight = img.naturalHeight;
+
+                // Calculate position relative to the image
+                const x = e.clientX - imgRect.left - offsetX;
+                const y = e.clientY - imgRect.top - offsetY;
+
+                // Constrain to image boundaries
+                const newX = Math.max(0, Math.min(imgRect.width - textBox.offsetWidth, x));
+                const newY = Math.max(0, Math.min(imgRect.height - textBox.offsetHeight, y));
 
                 // Update position
                 textBox.style.left = `${newX}px`;
                 textBox.style.top = `${newY}px`;
 
+                // Calculate percentage position for precise positioning
+                const percentX = (newX / imgRect.width) * 100;
+                const percentY = (newY / imgRect.height) * 100;
+
                 // Update form values if this is the selected text box
                 if (selectedTextBox === textBox) {
                     document.getElementById('leftPos').value = Math.round(newX);
                     document.getElementById('topPos').value = Math.round(newY);
+                    
+                    // Show percentage values for precise positioning
+                    const percentDisplay = document.getElementById('percentDisplay');
+                    if (percentDisplay) {
+                        percentDisplay.innerHTML = `
+                            <small class="text-muted">
+                                Position: ${percentX.toFixed(2)}% × ${percentY.toFixed(2)}%
+                            </small>
+                        `;
+                    }
                 }
             }
 
@@ -1610,6 +1663,10 @@
                 document.removeEventListener('mousemove', onMouseMove);
                 document.removeEventListener('mouseup', onMouseUp);
 
+                // Reset visual feedback
+                textBox.style.cursor = 'grab';
+                textBox.style.zIndex = '10';
+
                 // Update the textBoxes array with the new position
                 if (selectedTextBox === textBox) {
                     updateTextBoxData();
@@ -1617,7 +1674,7 @@
             }
         }
 
-        // Select a text box
+        // Enhanced text box selection with precise positioning
         function selectTextBox(textBox) {
             // Deselect current selection
             if (selectedTextBox) {
@@ -1629,9 +1686,6 @@
             textBox.classList.add('selected');
 
             // Update form values
-            const rect = textBox.getBoundingClientRect();
-            const canvasRect = canvasElement.getBoundingClientRect();
-
             const left = parseInt(textBox.style.left);
             const top = parseInt(textBox.style.top);
             const width = parseInt(textBox.style.width);
@@ -1645,6 +1699,27 @@
             document.getElementById('topPos').value = top;
             document.getElementById('width').value = width;
             document.getElementById('height').value = height;
+
+            // Calculate and display percentage position
+            const img = canvasElement.querySelector('img');
+            if (img) {
+                const imgRect = img.getBoundingClientRect();
+                const percentX = (left / imgRect.width) * 100;
+                const percentY = (top / imgRect.height) * 100;
+                
+                const percentDisplay = document.getElementById('percentDisplay');
+                if (percentDisplay) {
+                    percentDisplay.innerHTML = `
+                        <small class="text-muted">
+                            Position: ${percentX.toFixed(2)}% × ${percentY.toFixed(2)}%
+                        </small>
+                    `;
+                }
+            }
+
+            // Add visual feedback for selected text box
+            textBox.style.border = '3px solid var(--primary-color)';
+            textBox.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.2)';
         }
 
         // Update the selected text box
