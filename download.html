@@ -563,24 +563,46 @@
         // Generate certificate image for download
         function generateCertificateImage() {
             const canvas = window.certificateCanvas;
+            const img = canvas.querySelector('img');
             
-            // Create a temporary container for better rendering
+            if (!img || !img.complete) {
+                alert('Please wait for the certificate to load completely before downloading.');
+                return;
+            }
+
+            // Get the actual image dimensions
+            const imgWidth = img.naturalWidth;
+            const imgHeight = img.naturalHeight;
+            
+            console.log('Download dimensions:', imgWidth, 'x', imgHeight);
+
+            // Create a temporary container with actual image dimensions
             const tempContainer = document.createElement('div');
             tempContainer.style.position = 'absolute';
             tempContainer.style.left = '-9999px';
             tempContainer.style.top = '0';
-            tempContainer.style.width = '800px'; // Fixed width for consistent rendering
-            tempContainer.style.height = '600px'; // Fixed height for consistent rendering
+            tempContainer.style.width = imgWidth + 'px';
+            tempContainer.style.height = imgHeight + 'px';
             tempContainer.style.backgroundColor = '#ffffff';
-            tempContainer.style.overflow = 'visible';
+            tempContainer.style.overflow = 'hidden';
             
             // Clone the certificate content
             const certificateClone = canvas.querySelector('.certificate-container').cloneNode(true);
             certificateClone.style.width = '100%';
             certificateClone.style.height = '100%';
             certificateClone.style.position = 'relative';
+            certificateClone.style.overflow = 'hidden';
             
-            // Reposition text elements for download (using original template dimensions)
+            // Set the image to use actual dimensions
+            const clonedImg = certificateClone.querySelector('img');
+            if (clonedImg) {
+                clonedImg.style.width = '100%';
+                clonedImg.style.height = '100%';
+                clonedImg.style.objectFit = 'cover';
+                clonedImg.style.objectPosition = 'center';
+            }
+            
+            // Reposition text elements for download using actual image dimensions
             const textElements = certificateClone.querySelectorAll('[data-field]');
             textElements.forEach(textDiv => {
                 const originalLeft = parseInt(textDiv.getAttribute('data-original-left'));
@@ -589,31 +611,39 @@
                 const originalHeight = parseInt(textDiv.getAttribute('data-original-height'));
                 const originalFontSize = parseInt(textDiv.getAttribute('data-original-font-size') || '12');
                 
-                // Calculate positions as percentages for consistent positioning
-                const leftPercent = (originalLeft / 800) * 100;
-                const topPercent = (originalTop / 600) * 100;
-                const widthPercent = (originalWidth / 800) * 100;
-                const heightPercent = (originalHeight / 600) * 100;
+                // Calculate positions based on actual image dimensions
+                const scaleX = imgWidth / 800; // Scale factor for width
+                const scaleY = imgHeight / 600; // Scale factor for height
                 
-                // Apply percentage-based positioning for download
-                textDiv.style.left = leftPercent + '%';
-                textDiv.style.top = topPercent + '%';
-                textDiv.style.width = widthPercent + '%';
-                textDiv.style.height = heightPercent + '%';
-                textDiv.style.fontSize = originalFontSize + 'px';
+                const scaledLeft = originalLeft * scaleX;
+                const scaledTop = originalTop * scaleY;
+                const scaledWidth = originalWidth * scaleX;
+                const scaledHeight = originalHeight * scaleY;
+                const scaledFontSize = originalFontSize * Math.min(scaleX, scaleY);
+                
+                // Apply scaled positions for download
+                textDiv.style.left = scaledLeft + 'px';
+                textDiv.style.top = scaledTop + 'px';
+                textDiv.style.width = scaledWidth + 'px';
+                textDiv.style.height = scaledHeight + 'px';
+                textDiv.style.fontSize = scaledFontSize + 'px';
+                
+                // Remove debugging borders for download
+                textDiv.style.border = 'none';
+                textDiv.style.backgroundColor = 'transparent';
             });
             
             tempContainer.appendChild(certificateClone);
             document.body.appendChild(tempContainer);
 
-            // Generate canvas with better settings
+            // Generate canvas with actual image dimensions
             html2canvas(tempContainer, {
-                scale: 3, // Higher resolution
+                scale: 2, // Good resolution without being too large
                 useCORS: true,
                 allowTaint: true,
                 backgroundColor: '#ffffff',
-                width: 800,
-                height: 600,
+                width: imgWidth,
+                height: imgHeight,
                 logging: false
             }).then(canvas => {
                 const link = document.createElement('a');
