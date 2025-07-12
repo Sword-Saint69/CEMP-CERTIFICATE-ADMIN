@@ -36,10 +36,10 @@
             background: white;
             border-radius: var(--radius-md);
             box-shadow: var(--shadow-md);
-            max-width: 800px;
+            max-width: 100%;
             width: 100%;
             margin: 2rem;
-            overflow: hidden;
+            overflow: visible;
         }
 
         .certificate-header {
@@ -141,6 +141,7 @@
         @media (max-width: 768px) {
             .certificate-container {
                 margin: 1rem;
+                max-width: 100%;
             }
             
             .certificate-header {
@@ -154,6 +155,18 @@
             .download-actions {
                 flex-direction: column;
             }
+        }
+
+        /* Ensure certificate preview is fully visible */
+        #certificatePreview {
+            overflow: visible;
+            max-width: 100%;
+            width: 100%;
+        }
+
+        #certificatePreview > div {
+            overflow: visible;
+            max-width: 100%;
         }
     </style>
 </head>
@@ -380,11 +393,11 @@
             const canvas = document.createElement('div');
             canvas.style.position = 'relative';
             canvas.style.width = '100%';
-            canvas.style.maxWidth = '800px';
+            canvas.style.maxWidth = '100%';
             canvas.style.margin = '0 auto';
             canvas.style.border = '2px solid #e2e8f0';
             canvas.style.borderRadius = '8px';
-            canvas.style.overflow = 'hidden';
+            canvas.style.overflow = 'visible';
             canvas.style.backgroundColor = '#ffffff';
 
             // Create a container for the certificate
@@ -394,7 +407,8 @@
             certificateContainer.style.width = '100%';
             certificateContainer.style.height = 'auto';
             certificateContainer.style.minHeight = '600px'; // Minimum height for certificates
-            certificateContainer.style.display = 'inline-block'; // Ensure proper sizing
+            certificateContainer.style.display = 'block'; // Ensure proper sizing
+            certificateContainer.style.overflow = 'visible'; // Allow content to extend beyond container
 
             // Add certificate background image
             const img = document.createElement('img');
@@ -403,6 +417,7 @@
             img.style.height = 'auto';
             img.style.display = 'block';
             img.style.maxWidth = '100%';
+            img.style.minWidth = '100%';
             img.alt = 'Certificate Background';
             img.onload = function() {
                 // After image loads, position text elements correctly
@@ -540,7 +555,7 @@
             tempContainer.style.width = '800px'; // Fixed width for consistent rendering
             tempContainer.style.height = '600px'; // Fixed height for consistent rendering
             tempContainer.style.backgroundColor = '#ffffff';
-            tempContainer.style.overflow = 'hidden';
+            tempContainer.style.overflow = 'visible';
             
             // Clone the certificate content
             const certificateClone = canvas.querySelector('.certificate-container').cloneNode(true);
