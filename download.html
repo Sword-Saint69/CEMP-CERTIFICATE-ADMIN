@@ -162,11 +162,21 @@
             overflow: visible;
             max-width: 100%;
             width: 100%;
+            text-align: center;
         }
 
         #certificatePreview > div {
             overflow: visible;
             max-width: 100%;
+            display: inline-block;
+        }
+
+        /* Certificate image styling */
+        .certificate-container img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 0 auto;
         }
     </style>
 </head>
@@ -399,6 +409,7 @@
             canvas.style.borderRadius = '8px';
             canvas.style.overflow = 'visible';
             canvas.style.backgroundColor = '#ffffff';
+            canvas.style.textAlign = 'center';
 
             // Create a container for the certificate
             const certificateContainer = document.createElement('div');
@@ -409,17 +420,23 @@
             certificateContainer.style.minHeight = '600px'; // Minimum height for certificates
             certificateContainer.style.display = 'block'; // Ensure proper sizing
             certificateContainer.style.overflow = 'visible'; // Allow content to extend beyond container
+            certificateContainer.style.textAlign = 'center'; // Center the image
 
             // Add certificate background image
             const img = document.createElement('img');
             img.src = templateData.certificate_image;
-            img.style.width = '100%';
+            img.style.width = 'auto';
             img.style.height = 'auto';
-            img.style.display = 'block';
             img.style.maxWidth = '100%';
-            img.style.minWidth = '100%';
+            img.style.maxHeight = '80vh';
+            img.style.display = 'block';
+            img.style.margin = '0 auto';
+            img.style.objectFit = 'contain';
+            img.style.objectPosition = 'center';
             img.alt = 'Certificate Background';
             img.onload = function() {
+                console.log('Image loaded - Natural dimensions:', img.naturalWidth, 'x', img.naturalHeight);
+                console.log('Image display dimensions:', img.offsetWidth, 'x', img.offsetHeight);
                 // After image loads, position text elements correctly
                 positionTextElements(canvas, textBoxes, img);
             };
