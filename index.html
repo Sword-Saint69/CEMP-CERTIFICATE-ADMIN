@@ -921,6 +921,49 @@
         </div>
     </div>
 
+    <!-- Certificate Link Modal -->
+    <div class="modal fade" id="certificateLinkModal" tabindex="-1" aria-labelledby="certificateLinkModalLabel"
+        aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="certificateLinkModalLabel">Certificate Download Link</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Certificate Details</label>
+                        <div id="certificateLinkDetails" class="card p-3 bg-light">
+                            <!-- Certificate details will be shown here -->
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="certificateLink" class="form-label">Download Link</label>
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="certificateLink" readonly>
+                            <button class="btn btn-outline-secondary" type="button" id="copyLinkBtn">
+                                <i class="fas fa-copy"></i> Copy
+                            </button>
+                        </div>
+                        <small class="text-muted">Share this link with the certificate recipient</small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">QR Code</label>
+                        <div id="qrCodeContainer" class="text-center">
+                            <!-- QR code will be generated here -->
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary" id="testLinkBtn">
+                        <i class="fas fa-external-link-alt"></i> Test Link
+                    </button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Alert container for notifications -->
     <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 9999">
         <div id="alertContainer"></div>
@@ -934,6 +977,8 @@
     <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-storage-compat.js"></script>
     <!-- SheetJS (xlsx) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- QR Code Generator -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
     <!-- Main JavaScript -->
     <script>
         // Firebase configuration
@@ -1053,6 +1098,10 @@
             document.getElementById('excelFile').addEventListener('change', handleExcelUpload);
             document.getElementById('uploadBulk').addEventListener('click', processBulkUpload);
             document.getElementById('downloadTemplate').addEventListener('click', downloadSampleTemplate);
+
+            // Certificate link modal event listeners
+            document.getElementById('copyLinkBtn').addEventListener('click', copyCertificateLink);
+            document.getElementById('testLinkBtn').addEventListener('click', testCertificateLink);
         }
 
         // Load certificate template options for dropdowns
@@ -1909,6 +1958,9 @@
           <button class="btn btn-sm btn-outline-secondary edit-btn" data-id="${cert.id}">
             <i class="fas fa-edit"></i>
           </button>
+          <button class="btn btn-sm btn-outline-info link-btn" data-id="${cert.id}" title="Generate Download Link">
+            <i class="fas fa-link"></i>
+          </button>
           <button class="btn btn-sm btn-outline-danger delete-btn" data-id="${cert.id}">
             <i class="fas fa-trash"></i>
           </button>
@@ -1919,6 +1971,7 @@
                 // Add event listeners
                 row.querySelector('.view-btn').addEventListener('click', () => viewCertificate(cert.id));
                 row.querySelector('.edit-btn').addEventListener('click', () => editCertificate(cert.id));
+                row.querySelector('.link-btn').addEventListener('click', () => generateCertificateLink(cert.id));
                 row.querySelector('.delete-btn').addEventListener('click', () => deleteCertificate(cert.id));
             });
         }
@@ -2620,6 +2673,126 @@
                     console.error('Error generating sample template:', error);
                     showAlert('Error generating sample template: ' + error.message, 'danger');
                 });
+        }
+
+        // Certificate Link Functions
+
+        // Generate certificate download link
+        function generateCertificateLink(certificateId) {
+            db.collection('certificate_list').doc(certificateId).get()
+                .then(doc => {
+                    if (doc.exists) {
+                        const cert = doc.data();
+                        
+                        // Generate the download link
+                        const baseUrl = window.location.origin;
+                        const downloadUrl = `${baseUrl}/download.html?id=${certificateId}&search_id=${cert.search_id}`;
+                        
+                        // Show certificate details
+                        const detailsContainer = document.getElementById('certificateLinkDetails');
+                        detailsContainer.innerHTML = `
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <strong>Event:</strong> ${cert.event_name || 'N/A'}<br>
+                                    <strong>Organizer:</strong> ${cert.organizer_name || 'N/A'}<br>
+                                    <strong>Search ID:</strong> ${cert.search_id || 'N/A'}
+                                </div>
+                                <div class="col-md-6">
+                                    <strong>Certificate ID:</strong> ${cert.certificate_id || 'N/A'}<br>
+                                    <strong>Link ID:</strong> ${certificateId}<br>
+                                    <strong>Generated:</strong> ${new Date().toLocaleString()}
+                                </div>
+                            </div>
+                        `;
+                        
+                        // Set the link in the input field
+                        document.getElementById('certificateLink').value = downloadUrl;
+                        
+                        // Generate QR code
+                        generateQRCode(downloadUrl);
+                        
+                        // Show the modal
+                        const linkModal = new bootstrap.Modal(document.getElementById('certificateLinkModal'));
+                        linkModal.show();
+                        
+                        showAlert('Certificate link generated successfully!', 'success');
+                    } else {
+                        showAlert('Certificate not found', 'danger');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error generating certificate link:', error);
+                    showAlert('Error generating certificate link: ' + error.message, 'danger');
+                });
+        }
+
+        // Generate QR code for the certificate link
+        function generateQRCode(url) {
+            const qrContainer = document.getElementById('qrCodeContainer');
+            qrContainer.innerHTML = '<div class="spinner-border text-primary" role="status"><span class="visually-hidden">Generating QR Code...</span></div>';
+            
+            QRCode.toCanvas(qrContainer, url, {
+                width: 200,
+                margin: 2,
+                color: {
+                    dark: '#000000',
+                    light: '#FFFFFF'
+                }
+            }, function (error) {
+                if (error) {
+                    console.error('Error generating QR code:', error);
+                    qrContainer.innerHTML = '<p class="text-danger">Error generating QR code</p>';
+                } else {
+                    // Add download button for QR code
+                    const downloadBtn = document.createElement('button');
+                    downloadBtn.className = 'btn btn-sm btn-outline-primary mt-2';
+                    downloadBtn.innerHTML = '<i class="fas fa-download"></i> Download QR Code';
+                    downloadBtn.onclick = () => downloadQRCode(url);
+                    qrContainer.appendChild(downloadBtn);
+                }
+            });
+        }
+
+        // Download QR code as image
+        function downloadQRCode(url) {
+            const canvas = document.querySelector('#qrCodeContainer canvas');
+            if (canvas) {
+                const link = document.createElement('a');
+                link.download = 'certificate-qr-code.png';
+                link.href = canvas.toDataURL();
+                link.click();
+            }
+        }
+
+        // Copy certificate link to clipboard
+        function copyCertificateLink() {
+            const linkInput = document.getElementById('certificateLink');
+            linkInput.select();
+            linkInput.setSelectionRange(0, 99999); // For mobile devices
+            
+            try {
+                document.execCommand('copy');
+                showAlert('Link copied to clipboard!', 'success');
+            } catch (err) {
+                // Fallback for modern browsers
+                navigator.clipboard.writeText(linkInput.value).then(() => {
+                    showAlert('Link copied to clipboard!', 'success');
+                }).catch(() => {
+                    showAlert('Failed to copy link. Please copy manually.', 'warning');
+                });
+            }
+        }
+
+        // Test certificate link
+        function testCertificateLink() {
+            const linkInput = document.getElementById('certificateLink');
+            const url = linkInput.value;
+            
+            if (url) {
+                window.open(url, '_blank');
+            } else {
+                showAlert('No link available to test', 'warning');
+            }
         }
 
         // Utility Functions
