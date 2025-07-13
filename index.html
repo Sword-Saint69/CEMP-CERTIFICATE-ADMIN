@@ -520,9 +520,12 @@
                                                     <button type="button" class="btn btn-success me-2" id="addTextBox">
                                                         <i class="fas fa-plus me-2"></i>Add Text Box
                                                     </button>
-                                                    <button type="button" class="btn btn-danger"
+                                                    <button type="button" class="btn btn-danger me-2"
                                                         id="removeTextBox">
                                                         <i class="fas fa-trash me-2"></i>Remove Selected
+                                                    </button>
+                                                    <button type="button" class="btn btn-info" id="togglePreview">
+                                                        <i class="fas fa-eye me-2"></i>Toggle Preview
                                                     </button>
                                                 </div>
                                                 <div class="mb-3">
@@ -708,13 +711,22 @@
                                     <div class="card">
                                         <div class="card-header d-flex justify-content-between align-items-center">
                                             <span>Certificates</span>
-                                            <div class="input-group" style="max-width: 300px;">
-                                                <input type="text" class="form-control"
-                                                    placeholder="Search certificates..." id="certificateSearch">
-                                                <button class="btn btn-outline-secondary" type="button"
-                                                    id="searchButton">
-                                                    <i class="fas fa-search"></i>
+                                            <div class="d-flex gap-2">
+                                                <button class="btn btn-outline-info btn-sm" type="button" onclick="showLinkFormatInfo()" title="View Link Formats">
+                                                    <i class="fas fa-info-circle"></i> Link Formats
                                                 </button>
+                                                <div class="input-group" style="max-width: 300px;">
+                                                    <input type="text" class="form-control"
+                                                        placeholder="Search certificates..." id="certificateSearch">
+                                                    <button class="btn btn-outline-secondary" type="button"
+                                                        id="searchButton">
+                                                        <i class="fas fa-search"></i>
+                                                    </button>
+                                                    <button class="btn btn-outline-warning" type="button"
+                                                        id="clearSearchButton" title="Clear Search">
+                                                        <i class="fas fa-times"></i>
+                                                    </button>
+                                                </div>
                                             </div>
                                         </div>
                                         <div class="card-body">
@@ -924,42 +936,7 @@
         </div>
     </div>
 
-    <!-- Certificate Link Modal -->
-    <div class="modal fade" id="certificateLinkModal" tabindex="-1" aria-labelledby="certificateLinkModalLabel"
-        aria-hidden="true">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="certificateLinkModalLabel">Certificate Download Link</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label">Certificate Details</label>
-                        <div id="certificateLinkDetails" class="card p-3 bg-light">
-                            <!-- Certificate details will be shown here -->
-                        </div>
-                    </div>
-                    <div class="mb-3">
-                        <label for="certificateLink" class="form-label">Download Link</label>
-                        <div class="input-group">
-                            <input type="text" class="form-control" id="certificateLink" readonly>
-                            <button class="btn btn-outline-secondary" type="button" id="copyLinkBtn">
-                                <i class="fas fa-copy"></i> Copy
-                            </button>
-                        </div>
-                        <small class="text-muted">Share this link with the certificate recipient</small>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-primary" id="testLinkBtn">
-                        <i class="fas fa-external-link-alt"></i> Test Link
-                    </button>
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                </div>
-            </div>
-        </div>
-    </div>
+
 
     <!-- Alert container for notifications -->
     <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 9999">
@@ -974,6 +951,8 @@
     <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-storage-compat.js"></script>
     <!-- SheetJS (xlsx) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- html2canvas for certificate generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
     <!-- Main JavaScript -->
     <script>
@@ -1002,6 +981,7 @@
         let totalCertificates = 0;
         let certificatesData = [];
         let isDragging = false;
+        let previewMode = false;
 
         // DOM Elements
         const certificateImg = document.getElementById('certificateImg');
@@ -1079,6 +1059,10 @@
             document.getElementById('resetForm').addEventListener('click', resetCertificateForm);
             document.getElementById('addField').addEventListener('click', () => addCustomField());
             document.getElementById('searchButton').addEventListener('click', searchCertificates);
+            document.getElementById('clearSearchButton').addEventListener('click', function() {
+                document.getElementById('certificateSearch').value = '';
+                loadCertificates('');
+            });
             document.getElementById('certificateSearch').addEventListener('keyup', function (event) {
                 if (event.key === 'Enter') {
                     searchCertificates();
@@ -1096,9 +1080,10 @@
             document.getElementById('uploadBulk').addEventListener('click', processBulkUpload);
             document.getElementById('downloadTemplate').addEventListener('click', downloadSampleTemplate);
 
-            // Certificate link modal event listeners
-            document.getElementById('copyLinkBtn').addEventListener('click', copyCertificateLink);
-            document.getElementById('testLinkBtn').addEventListener('click', testCertificateLink);
+
+
+            // Preview mode toggle
+            document.getElementById('togglePreview').addEventListener('click', togglePreviewMode);
         }
 
         // Load certificate template options for dropdowns
@@ -1671,6 +1656,11 @@
                 if (selectedTextBox === textBox) {
                     updateTextBoxData();
                 }
+
+                // Update preview if in preview mode
+                if (previewMode) {
+                    updatePreviewPosition(textBox);
+                }
             }
         }
 
@@ -1970,9 +1960,11 @@
                 // Implement search - can search by certificate_id, event_name, or search_id
                 query = query.where('search_id', '>=', search)
                     .where('search_id', '<=', search + '\uf8ff')
+                    .orderBy('search_id')
                     .limit(20);
             } else {
-                query = query.limit(itemsPerPage);
+                // For pagination, load all certificates and paginate client-side
+                query = query.orderBy('event_name');
             }
 
             query.get()
@@ -1985,14 +1977,21 @@
                         });
                     });
 
-                    renderCertificatesTable();
-
-                    // Count total certificates for pagination (only if not searching)
-                    if (!search) {
-                        db.collection('certificate_list').get().then(snapshot => {
-                            totalCertificates = snapshot.size;
-                            renderPagination();
-                        });
+                    if (search) {
+                        // For search results, show all results without pagination
+                        renderCertificatesTable();
+                    } else {
+                        // For normal view, implement pagination
+                        totalCertificates = querySnapshot.size;
+                        currentPage = 1;
+                        
+                        // Calculate pagination for first page
+                        const startIndex = 0;
+                        const endIndex = itemsPerPage;
+                        certificatesData = certificatesData.slice(startIndex, endIndex);
+                        
+                        renderCertificatesTable();
+                        renderPagination();
                     }
                 })
                 .catch(error => {
@@ -2026,9 +2025,14 @@
           <button class="btn btn-sm btn-outline-secondary edit-btn" data-id="${cert.id}">
             <i class="fas fa-edit"></i>
           </button>
-          <button class="btn btn-sm btn-outline-info link-btn" data-id="${cert.id}" title="Generate Download Link">
-            <i class="fas fa-link"></i>
+          <button class="btn btn-sm btn-outline-info link-btn" data-id="${cert.id}" title="Download Certificate">
+            <i class="fas fa-download"></i>
           </button>
+          ${cert.download_info ? `
+            <button class="btn btn-sm btn-outline-success view-link-btn" data-id="${cert.id}" title="View Download Link">
+              <i class="fas fa-link"></i>
+            </button>
+          ` : ''}
           <button class="btn btn-sm btn-outline-danger delete-btn" data-id="${cert.id}">
             <i class="fas fa-trash"></i>
           </button>
@@ -2040,6 +2044,9 @@
                 row.querySelector('.view-btn').addEventListener('click', () => viewCertificate(cert.id));
                 row.querySelector('.edit-btn').addEventListener('click', () => editCertificate(cert.id));
                 row.querySelector('.link-btn').addEventListener('click', () => generateCertificateLink(cert.id));
+                if (cert.download_info) {
+                    row.querySelector('.view-link-btn').addEventListener('click', () => viewDownloadLink(cert.id));
+                }
                 row.querySelector('.delete-btn').addEventListener('click', () => deleteCertificate(cert.id));
             });
         }
@@ -2099,10 +2106,12 @@
 
         // Load certificates page
         function loadCertificatesPage(page) {
-            const skip = (page - 1) * itemsPerPage;
-
+            // For Firestore, we need to implement proper pagination
+            // Since Firestore doesn't support skip, we'll load all certificates and paginate client-side
+            // This is a simple implementation - for large datasets, consider using startAfter with document references
+            
             db.collection('certificate_list')
-                .limit(itemsPerPage)
+                .orderBy('event_name') // Add ordering for consistent pagination
                 .get()
                 .then(querySnapshot => {
                     certificatesData = [];
@@ -2112,6 +2121,16 @@
                             ...doc.data()
                         });
                     });
+
+                    // Calculate pagination
+                    const totalPages = Math.ceil(certificatesData.length / itemsPerPage);
+                    const startIndex = (page - 1) * itemsPerPage;
+                    const endIndex = startIndex + itemsPerPage;
+                    
+                    // Slice the data for current page
+                    certificatesData = certificatesData.slice(startIndex, endIndex);
+                    totalCertificates = querySnapshot.size;
+                    currentPage = page;
 
                     renderCertificatesTable();
                     renderPagination();
@@ -2250,8 +2269,8 @@
             if (searchTerm) {
                 loadCertificates(searchTerm);
             } else {
-                showAlert('Please enter a search ID', 'warning');
-                // loadCertificates(''); // Show instructions
+                // If search is cleared, reload all certificates with pagination
+                loadCertificates('');
             }
         }
 
@@ -2341,6 +2360,8 @@
                 db.collection('certificate_list').doc(editId).update(certificateData)
                     .then(() => {
                         showAlert('Certificate updated successfully', 'success');
+                        // Generate and store download link for updated certificate
+                        generateAndStoreDownloadLink(editId, certificateData);
                         resetCertificateForm();
                         loadCertificates(); // Reload the list
                     })
@@ -2351,8 +2372,10 @@
             } else {
                 // Create new certificate
                 db.collection('certificate_list').add(certificateData)
-                    .then(() => {
+                    .then((docRef) => {
                         showAlert('Certificate added successfully', 'success');
+                        // Generate and store download link for new certificate
+                        generateAndStoreDownloadLink(docRef.id, certificateData);
                         resetCertificateForm();
                         loadCertificates(); // Reload the list
                     })
@@ -2361,6 +2384,123 @@
                         showAlert('Error adding certificate: ' + error.message, 'danger');
                     });
             }
+        }
+
+        // Generate and store download link for certificate
+        function generateAndStoreDownloadLink(certificateDocId, certificateData) {
+            // Show loading message
+            showAlert('Generating download link...', 'info');
+            
+            // Load template and generate certificate
+            db.collection('certificate_template').doc(certificateData.certificate_id).get()
+                .then(templateDoc => {
+                    if (!templateDoc.exists) {
+                        showAlert('Certificate template not found, skipping download link generation', 'warning');
+                        return;
+                    }
+
+                    const template = templateDoc.data();
+                    
+                    // Get text boxes for the template
+                    return db.collection('certificate_template').doc(certificateData.certificate_id).collection('tBox').get()
+                        .then(textBoxesSnapshot => {
+                            const textBoxes = [];
+                            textBoxesSnapshot.forEach(doc => {
+                                textBoxes.push(doc.data());
+                            });
+
+                            // Generate certificate and store link
+                            generateCertificateAndStoreLink(certificateDocId, certificateData, textBoxes, template);
+                        });
+                })
+                .catch(error => {
+                    console.error('Error loading template for download link generation:', error);
+                    showAlert('Error generating download link: ' + error.message, 'warning');
+                });
+        }
+
+        // Generate certificate and store link
+        function generateCertificateAndStoreLink(certificateDocId, certificateData, textBoxes, template) {
+            // Create a temporary container for the certificate
+            const tempContainer = document.createElement('div');
+            tempContainer.style.position = 'absolute';
+            tempContainer.style.left = '-9999px';
+            tempContainer.style.top = '0';
+            tempContainer.style.width = '1200px';
+            tempContainer.style.height = '800px';
+            tempContainer.style.backgroundColor = '#ffffff';
+            tempContainer.style.overflow = 'hidden';
+            
+            // Create certificate HTML
+            const certificateHtml = createCertificateHtml(certificateData, textBoxes, template);
+            tempContainer.innerHTML = certificateHtml;
+            
+            document.body.appendChild(tempContainer);
+
+            // Wait for the image to load before generating canvas
+            const img = tempContainer.querySelector('img');
+            if (img) {
+                if (img.complete) {
+                    generateCanvasAndStoreLink(tempContainer, certificateDocId, certificateData);
+                } else {
+                    const imageTimeout = setTimeout(() => {
+                        generateCanvasAndStoreLink(tempContainer, certificateDocId, certificateData);
+                    }, 5000);
+                    
+                    img.onload = () => {
+                        clearTimeout(imageTimeout);
+                        generateCanvasAndStoreLink(tempContainer, certificateDocId, certificateData);
+                    };
+                    img.onerror = () => {
+                        clearTimeout(imageTimeout);
+                        generateCanvasAndStoreLink(tempContainer, certificateDocId, certificateData);
+                    };
+                }
+            } else {
+                generateCanvasAndStoreLink(tempContainer, certificateDocId, certificateData);
+            }
+        }
+
+        // Generate canvas and store link
+        function generateCanvasAndStoreLink(tempContainer, certificateDocId, certificateData) {
+            html2canvas(tempContainer, {
+                scale: 2,
+                useCORS: true,
+                allowTaint: true,
+                backgroundColor: '#ffffff',
+                width: 1200,
+                height: 800,
+                logging: false
+            }).then(canvas => {
+                // Create download link
+                const fileName = `certificate_${certificateData.search_id || certificateData.event_name.replace(/\s+/g, '_')}.png`;
+                const downloadLink = canvas.toDataURL('image/png', 1.0);
+                
+                // Store download link in Firebase
+                const downloadData = {
+                    download_link: downloadLink,
+                    file_name: fileName,
+                    generated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                    download_count: 0
+                };
+
+                db.collection('certificate_list').doc(certificateDocId).update({
+                    download_info: downloadData
+                }).then(() => {
+                    console.log('Download link stored in Firebase successfully');
+                    showAlert('Certificate saved with download link!', 'success');
+                }).catch(error => {
+                    console.error('Error storing download link:', error);
+                    showAlert('Certificate saved but failed to store download link: ' + error.message, 'warning');
+                });
+                
+                // Clean up
+                document.body.removeChild(tempContainer);
+            }).catch(error => {
+                console.error('Error generating certificate image:', error);
+                showAlert('Certificate saved but failed to generate download link: ' + error.message, 'warning');
+                document.body.removeChild(tempContainer);
+            });
         }
 
         // Bulk Upload Functions
@@ -2745,84 +2885,528 @@
 
         // Certificate Link Functions
 
-        // Generate certificate download link
+        // Generate and download certificate directly
         function generateCertificateLink(certificateId) {
             db.collection('certificate_list').doc(certificateId).get()
                 .then(doc => {
                     if (doc.exists) {
                         const cert = doc.data();
                         
-                        // Generate the download link
-                        const baseUrl = window.location.origin;
-                        const downloadUrl = `${baseUrl}/download.html?id=${certificateId}&search_id=${cert.search_id}`;
+                        // Show loading state
+                        showAlert('Generating certificate...', 'info');
                         
-                        // Show certificate details
-                        const detailsContainer = document.getElementById('certificateLinkDetails');
-                        detailsContainer.innerHTML = `
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <strong>Event:</strong> ${cert.event_name || 'N/A'}<br>
-                                    <strong>Organizer:</strong> ${cert.organizer_name || 'N/A'}<br>
-                                    <strong>Search ID:</strong> ${cert.search_id || 'N/A'}
-                                </div>
-                                <div class="col-md-6">
-                                    <strong>Certificate ID:</strong> ${cert.certificate_id || 'N/A'}<br>
-                                    <strong>Link ID:</strong> ${certificateId}<br>
-                                    <strong>Generated:</strong> ${new Date().toLocaleString()}
-                                </div>
-                            </div>
-                        `;
-                        
-                        // Set the link in the input field
-                        document.getElementById('certificateLink').value = downloadUrl;
-                        
-                        // Show the modal
-                        const linkModal = new bootstrap.Modal(document.getElementById('certificateLinkModal'));
-                        linkModal.show();
-                        
-                        showAlert('Certificate link generated successfully!', 'success');
+                        // Load template and generate certificate
+                        loadTemplateAndGenerateCertificate(cert, certificateId);
                     } else {
                         showAlert('Certificate not found', 'danger');
                     }
                 })
                 .catch(error => {
-                    console.error('Error generating certificate link:', error);
-                    showAlert('Error generating certificate link: ' + error.message, 'danger');
+                    console.error('Error generating certificate:', error);
+                    showAlert('Error generating certificate: ' + error.message, 'danger');
                 });
         }
 
+        // Load template and generate certificate
+        function loadTemplateAndGenerateCertificate(cert, certificateId) {
+            // First get the template
+            db.collection('certificate_template').doc(cert.certificate_id).get()
+                .then(templateDoc => {
+                    if (!templateDoc.exists) {
+                        showAlert('Certificate template not found', 'danger');
+                        return;
+                    }
 
+                    const template = templateDoc.data();
+                    
+                    // Get text boxes for the template
+                    return db.collection('certificate_template').doc(cert.certificate_id).collection('tBox').get()
+                        .then(textBoxesSnapshot => {
+                            const textBoxes = [];
+                            textBoxesSnapshot.forEach(doc => {
+                                textBoxes.push(doc.data());
+                            });
 
-        // Copy certificate link to clipboard
-        function copyCertificateLink() {
-            const linkInput = document.getElementById('certificateLink');
+                                                // Generate and download the certificate
+                    generateAndDownloadCertificate(cert, textBoxes, template, certificateId);
+                        });
+                })
+                .catch(error => {
+                    console.error('Error loading template:', error);
+                    showAlert('Error loading template: ' + error.message, 'danger');
+                });
+        }
+
+        // Generate and download certificate
+        function generateAndDownloadCertificate(cert, textBoxes, template, certificateId) {
+            // Create a temporary container for the certificate
+            const tempContainer = document.createElement('div');
+            tempContainer.style.position = 'absolute';
+            tempContainer.style.left = '-9999px';
+            tempContainer.style.top = '0';
+            tempContainer.style.width = '1200px'; // Standard certificate width
+            tempContainer.style.height = '800px';  // Standard certificate height
+            tempContainer.style.backgroundColor = '#ffffff';
+            tempContainer.style.overflow = 'hidden';
+            
+            // Create certificate HTML
+            const certificateHtml = createCertificateHtml(cert, textBoxes, template);
+            tempContainer.innerHTML = certificateHtml;
+            
+            document.body.appendChild(tempContainer);
+
+            // Wait for the image to load before generating canvas
+            const img = tempContainer.querySelector('img');
+            console.log('Found image element:', img);
+            if (img) {
+                console.log('Image src:', img.src);
+                console.log('Image complete:', img.complete);
+                if (img.complete) {
+                    // Image is already loaded
+                    console.log('Image already loaded, generating canvas...');
+                    generateCanvasAndDownload(tempContainer, cert, certificateId);
+                } else {
+                    // Wait for image to load
+                    console.log('Waiting for image to load...');
+                    
+                    // Set a timeout in case image takes too long
+                    const imageTimeout = setTimeout(() => {
+                        console.log('Image load timeout, generating canvas anyway...');
+                        generateCanvasAndDownload(tempContainer, cert, certificateId);
+                    }, 5000); // 5 second timeout
+                    
+                    img.onload = () => {
+                        console.log('Image loaded successfully, generating canvas...');
+                        clearTimeout(imageTimeout);
+                        generateCanvasAndDownload(tempContainer, cert, certificateId);
+                    };
+                    img.onerror = () => {
+                        console.error('Failed to load certificate template image');
+                        clearTimeout(imageTimeout);
+                        showAlert('Failed to load certificate template image, using fallback background', 'warning');
+                        generateCanvasAndDownload(tempContainer, cert, certificateId);
+                    };
+                }
+            } else {
+                // No image found, generate without background
+                console.log('No image found, generating without background...');
+                generateCanvasAndDownload(tempContainer, cert, certificateId);
+            }
+        }
+
+        // Generate canvas and download
+        function generateCanvasAndDownload(tempContainer, cert, certificateId) {
+            // Use html2canvas to generate the certificate image
+            html2canvas(tempContainer, {
+                scale: 2, // High resolution
+                useCORS: true,
+                allowTaint: true,
+                backgroundColor: '#ffffff',
+                width: 1200,
+                height: 800,
+                logging: false
+            }).then(canvas => {
+                // Create download link
+                const link = document.createElement('a');
+                const fileName = `certificate_${cert.search_id || cert.event_name.replace(/\s+/g, '_')}.png`;
+                link.download = fileName;
+                link.href = canvas.toDataURL('image/png', 1.0);
+                
+                // Trigger download
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                
+                // Store download link in Firebase
+                const downloadLink = canvas.toDataURL('image/png', 1.0);
+                storeDownloadLinkInFirebase(certificateId, downloadLink, fileName);
+                
+                // Clean up
+                document.body.removeChild(tempContainer);
+                
+                showAlert('Certificate downloaded successfully!', 'success');
+            }).catch(error => {
+                console.error('Error generating certificate image:', error);
+                showAlert('Error generating certificate: ' + error.message, 'danger');
+                document.body.removeChild(tempContainer);
+            });
+        }
+
+        // Store download link in Firebase
+        function storeDownloadLinkInFirebase(certificateId, downloadLink, fileName) {
+            // Generate different link formats
+            const baseUrl = window.location.origin;
+            const directDownloadUrl = `${baseUrl}/download.html?id=${certificateId}`;
+            const apiDownloadUrl = `${baseUrl}/api/certificates/${certificateId}/download`;
+            
+            const downloadData = {
+                // Data URL format (current - base64 encoded image)
+                download_link: downloadLink,
+                
+                // Direct download URL format
+                direct_download_url: directDownloadUrl,
+                
+                // API download URL format
+                api_download_url: apiDownloadUrl,
+                
+                // File information
+                file_name: fileName,
+                file_size: Math.round(downloadLink.length * 0.75), // Approximate size in bytes
+                file_format: 'PNG',
+                
+                // Metadata
+                generated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                download_count: 0,
+                link_format: 'data_url' // Can be: 'data_url', 'direct_url', 'api_url'
+            };
+
+            db.collection('certificate_list').doc(certificateId).update({
+                download_info: downloadData
+            }).then(() => {
+                console.log('Download link stored in Firebase successfully');
+                console.log('Link formats available:', {
+                    data_url: downloadLink.substring(0, 100) + '...',
+                    direct_url: directDownloadUrl,
+                    api_url: apiDownloadUrl
+                });
+                showAlert('Download link saved to database', 'success');
+            }).catch(error => {
+                console.error('Error storing download link:', error);
+                showAlert('Error storing download link: ' + error.message, 'warning');
+            });
+        }
+
+        // View stored download link
+        function viewDownloadLink(certificateId) {
+            db.collection('certificate_list').doc(certificateId).get()
+                .then(doc => {
+                    if (doc.exists) {
+                        const cert = doc.data();
+                        const downloadInfo = cert.download_info;
+                        
+                        if (downloadInfo) {
+                            // Create a modal to show the download link
+                            const modalHtml = `
+                                <div class="modal fade" id="downloadLinkModal" tabindex="-1">
+                                    <div class="modal-dialog">
+                                        <div class="modal-content">
+                                            <div class="modal-header">
+                                                <h5 class="modal-title">Certificate Download Link</h5>
+                                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                            </div>
+                                            <div class="modal-body">
+                                                <div class="mb-3">
+                                                    <label class="form-label">Certificate Details</label>
+                                                    <div class="card p-3 bg-light">
+                                                        <strong>Event:</strong> ${cert.event_name || 'N/A'}<br>
+                                                        <strong>Organizer:</strong> ${cert.organizer_name || 'N/A'}<br>
+                                                        <strong>Search ID:</strong> ${cert.search_id || 'N/A'}<br>
+                                                        <strong>File Name:</strong> ${downloadInfo.file_name}<br>
+                                                        <strong>Generated:</strong> ${downloadInfo.generated_at ? new Date(downloadInfo.generated_at.toDate()).toLocaleString() : 'N/A'}
+                                                    </div>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label class="form-label">Download Link Formats</label>
+                                                    
+                                                    <!-- Data URL Format -->
+                                                    <div class="mb-2">
+                                                        <label class="form-label text-muted small">Data URL (Base64)</label>
+                                                        <div class="input-group">
+                                                            <input type="text" class="form-control" id="storedDownloadLink" readonly value="${downloadInfo.download_link.substring(0, 100)}...">
+                                                            <button class="btn btn-outline-secondary" type="button" onclick="copyStoredLink('data_url')">
+                                                                <i class="fas fa-copy"></i> Copy
+                                                            </button>
+                                                        </div>
+                                                        <small class="text-muted">Base64 encoded image data</small>
+                                                    </div>
+                                                    
+                                                    <!-- Direct Download URL -->
+                                                    <div class="mb-2">
+                                                        <label class="form-label text-muted small">Direct Download URL</label>
+                                                        <div class="input-group">
+                                                            <input type="text" class="form-control" id="directDownloadLink" readonly value="${downloadInfo.direct_download_url || 'Not available'}">
+                                                            <button class="btn btn-outline-secondary" type="button" onclick="copyStoredLink('direct_url')">
+                                                                <i class="fas fa-copy"></i> Copy
+                                                            </button>
+                                                        </div>
+                                                        <small class="text-muted">Direct link to download page</small>
+                                                    </div>
+                                                    
+                                                    <!-- API Download URL -->
+                                                    <div class="mb-2">
+                                                        <label class="form-label text-muted small">API Download URL</label>
+                                                        <div class="input-group">
+                                                            <input type="text" class="form-control" id="apiDownloadLink" readonly value="${downloadInfo.api_download_url || 'Not available'}">
+                                                            <button class="btn btn-outline-secondary" type="button" onclick="copyStoredLink('api_url')">
+                                                                <i class="fas fa-copy"></i> Copy
+                                                            </button>
+                                                        </div>
+                                                        <small class="text-muted">API endpoint for direct download</small>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="modal-footer">
+                                                <button type="button" class="btn btn-primary" onclick="downloadFromStoredLink('${downloadInfo.download_link}', '${downloadInfo.file_name}')">
+                                                    <i class="fas fa-download"></i> Download Again
+                                                </button>
+                                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                            
+                            // Remove existing modal if any
+                            const existingModal = document.getElementById('downloadLinkModal');
+                            if (existingModal) {
+                                existingModal.remove();
+                            }
+                            
+                            // Add modal to body
+                            document.body.insertAdjacentHTML('beforeend', modalHtml);
+                            
+                            // Show modal
+                            const modal = new bootstrap.Modal(document.getElementById('downloadLinkModal'));
+                            modal.show();
+                        } else {
+                            showAlert('No download link found for this certificate', 'warning');
+                        }
+                    } else {
+                        showAlert('Certificate not found', 'danger');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading certificate:', error);
+                    showAlert('Error loading certificate: ' + error.message, 'danger');
+                });
+        }
+
+        // Copy stored download link
+        function copyStoredLink(format = 'data_url') {
+            let linkInput;
+            let linkText;
+            
+            switch(format) {
+                case 'data_url':
+                    linkInput = document.getElementById('storedDownloadLink');
+                    linkText = linkInput.value;
+                    break;
+                case 'direct_url':
+                    linkInput = document.getElementById('directDownloadLink');
+                    linkText = linkInput.value;
+                    break;
+                case 'api_url':
+                    linkInput = document.getElementById('apiDownloadLink');
+                    linkText = linkInput.value;
+                    break;
+                default:
+                    linkInput = document.getElementById('storedDownloadLink');
+                    linkText = linkInput.value;
+            }
+            
+            if (linkText === 'Not available') {
+                showAlert('This link format is not available', 'warning');
+                return;
+            }
+            
             linkInput.select();
-            linkInput.setSelectionRange(0, 99999); // For mobile devices
+            linkInput.setSelectionRange(0, 99999);
             
             try {
                 document.execCommand('copy');
-                showAlert('Link copied to clipboard!', 'success');
+                showAlert(`${format.replace('_', ' ')} copied to clipboard!`, 'success');
             } catch (err) {
-                // Fallback for modern browsers
-                navigator.clipboard.writeText(linkInput.value).then(() => {
-                    showAlert('Link copied to clipboard!', 'success');
+                navigator.clipboard.writeText(linkText).then(() => {
+                    showAlert(`${format.replace('_', ' ')} copied to clipboard!`, 'success');
                 }).catch(() => {
                     showAlert('Failed to copy link. Please copy manually.', 'warning');
                 });
             }
         }
 
-        // Test certificate link
-        function testCertificateLink() {
-            const linkInput = document.getElementById('certificateLink');
-            const url = linkInput.value;
-            
-            if (url) {
-                window.open(url, '_blank');
-            } else {
-                showAlert('No link available to test', 'warning');
-            }
+        // Download from stored link
+        function downloadFromStoredLink(dataUrl, fileName) {
+            const link = document.createElement('a');
+            link.href = dataUrl;
+            link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            showAlert('Certificate downloaded from stored link!', 'success');
         }
+
+        // Show download link format information
+        function showLinkFormatInfo() {
+            const modalHtml = `
+                <div class="modal fade" id="linkFormatInfoModal" tabindex="-1">
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title">Download Link Formats</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="row">
+                                    <div class="col-md-4">
+                                        <div class="card">
+                                            <div class="card-header">
+                                                <h6 class="mb-0">Data URL (Base64)</h6>
+                                            </div>
+                                            <div class="card-body">
+                                                <p class="small">Format: <code>data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...</code></p>
+                                                <ul class="small">
+                                                    <li><strong>Pros:</strong> Self-contained, no external dependencies</li>
+                                                    <li><strong>Cons:</strong> Large size, not shareable via URL</li>
+                                                    <li><strong>Use:</strong> Direct download, embedding in HTML</li>
+                                                </ul>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="card">
+                                            <div class="card-header">
+                                                <h6 class="mb-0">Direct Download URL</h6>
+                                            </div>
+                                            <div class="card-body">
+                                                <p class="small">Format: <code>https://yoursite.com/download.html?id=ABC123</code></p>
+                                                <ul class="small">
+                                                    <li><strong>Pros:</strong> Shareable, user-friendly</li>
+                                                    <li><strong>Cons:</strong> Requires download page</li>
+                                                    <li><strong>Use:</strong> Sharing with recipients</li>
+                                                </ul>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="card">
+                                            <div class="card-header">
+                                                <h6 class="mb-0">API Download URL</h6>
+                                            </div>
+                                            <div class="card-body">
+                                                <p class="small">Format: <code>https://yoursite.com/api/certificates/ABC123/download</code></p>
+                                                <ul class="small">
+                                                    <li><strong>Pros:</strong> RESTful, programmable</li>
+                                                    <li><strong>Cons:</strong> Requires API implementation</li>
+                                                    <li><strong>Use:</strong> Integration with other systems</li>
+                                                </ul>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="mt-3">
+                                    <h6>Firebase Data Structure:</h6>
+                                    <pre class="bg-light p-2 rounded"><code>{
+  "download_info": {
+    "download_link": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...",
+    "direct_download_url": "https://yoursite.com/download.html?id=ABC123",
+    "api_download_url": "https://yoursite.com/api/certificates/ABC123/download",
+    "file_name": "certificate_ABC123.png",
+    "file_size": 245760,
+    "file_format": "PNG",
+    "generated_at": "2024-01-15T10:30:00Z",
+    "download_count": 0,
+    "link_format": "data_url"
+  }
+}</code></pre>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Remove existing modal if any
+            const existingModal = document.getElementById('linkFormatInfoModal');
+            if (existingModal) {
+                existingModal.remove();
+            }
+            
+            // Add modal to body
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            
+            // Show modal
+            const modal = new bootstrap.Modal(document.getElementById('linkFormatInfoModal'));
+            modal.show();
+        }
+
+        // Create certificate HTML
+        function createCertificateHtml(cert, textBoxes, template) {
+            const imgSrc = template.certificate_image || 'https://via.placeholder.com/1200x800/ffffff/cccccc?text=Certificate+Template';
+            
+            console.log('Certificate template image source:', imgSrc);
+            console.log('Template data:', template);
+            
+            // Create a gradient background as fallback
+            const fallbackBackground = `
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                border: 8px solid #f8f9fa;
+                border-radius: 20px;
+            `;
+            
+            let certificateHtml = `
+                <div style="position: relative; width: 100%; height: 100%; ${fallbackBackground};">
+                    <img src="${imgSrc}" style="width: 100%; height: 100%; object-fit: cover; position: absolute; top: 0; left: 0;" crossorigin="anonymous">
+            `;
+            
+            // Add text boxes with data
+            textBoxes.forEach(textBox => {
+                const fieldName = textBox.field;
+                let fieldValue = '';
+                
+                // Get value from certificate data
+                if (cert[fieldName]) {
+                    fieldValue = cert[fieldName];
+                } else if (fieldName === 'event_name') {
+                    fieldValue = cert.event_name || '';
+                } else if (fieldName === 'organizer_name') {
+                    fieldValue = cert.organizer_name || '';
+                } else if (fieldName === 'search_id') {
+                    fieldValue = cert.search_id || '';
+                } else {
+                    fieldValue = `[${fieldName}]`;
+                }
+                
+                const left = parseInt(textBox.left);
+                const top = parseInt(textBox.top);
+                const width = parseInt(textBox.width);
+                const height = parseInt(textBox.height);
+                const fontSize = parseInt(textBox.font_size);
+                const fontStyle = parseInt(textBox.style);
+                
+                certificateHtml += `
+                    <div style="
+                        position: absolute;
+                        left: ${left}px;
+                        top: ${top}px;
+                        width: ${width}px;
+                        height: ${height}px;
+                        font-family: ${fontStyle === 1 ? 'cursive' : 'Arial, sans-serif'};
+                        font-size: ${fontSize}px;
+                        color: #1e293b;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        text-align: center;
+                        font-weight: bold;
+                        text-shadow: 2px 2px 4px rgba(255,255,255,0.9), 1px 1px 2px rgba(0,0,0,0.3);
+                        background: rgba(255, 255, 255, 0.1);
+                        border-radius: 4px;
+                        padding: 4px;
+                    ">${fieldValue}</div>
+                `;
+            });
+            
+            certificateHtml += '</div>';
+            return certificateHtml;
+        }
+
+
+
+
 
         // Utility Functions
 
@@ -2883,6 +3467,103 @@
                 }
             }
         });
+
+        // Toggle preview mode with sample text
+        function togglePreviewMode() {
+            previewMode = !previewMode;
+            const toggleBtn = document.getElementById('togglePreview');
+            
+            if (previewMode) {
+                toggleBtn.innerHTML = '<i class="fas fa-eye-slash me-2"></i>Hide Preview';
+                toggleBtn.className = 'btn btn-warning';
+                showPreviewWithSampleText();
+            } else {
+                toggleBtn.innerHTML = '<i class="fas fa-eye me-2"></i>Toggle Preview';
+                toggleBtn.className = 'btn btn-info';
+                hidePreview();
+            }
+        }
+
+        // Show preview with sample text
+        function showPreviewWithSampleText() {
+            const textBoxElements = canvasElement.querySelectorAll('.text-box');
+            
+            textBoxElements.forEach(textBox => {
+                const fieldName = textBox.dataset.field;
+                const sampleText = getSampleText(fieldName);
+                
+                // Create preview text element
+                const previewText = document.createElement('div');
+                previewText.className = 'preview-text';
+                previewText.style.position = 'absolute';
+                previewText.style.left = textBox.style.left;
+                previewText.style.top = textBox.style.top;
+                previewText.style.width = textBox.style.width;
+                previewText.style.height = textBox.style.height;
+                previewText.style.fontFamily = textBox.style.fontFamily;
+                previewText.style.fontSize = textBox.style.fontSize;
+                previewText.style.color = '#1e293b';
+                previewText.style.fontWeight = '600';
+                previewText.style.display = 'flex';
+                previewText.style.alignItems = 'center';
+                previewText.style.justifyContent = 'center';
+                previewText.style.textAlign = 'center';
+                previewText.style.backgroundColor = 'rgba(255, 255, 255, 0.9)';
+                previewText.style.border = '2px solid #10b981';
+                previewText.style.borderRadius = '4px';
+                previewText.style.zIndex = '100';
+                previewText.textContent = sampleText;
+                
+                canvasElement.appendChild(previewText);
+                textBox.style.opacity = '0.3';
+            });
+        }
+
+        // Hide preview
+        function hidePreview() {
+            const previewTexts = canvasElement.querySelectorAll('.preview-text');
+            const textBoxes = canvasElement.querySelectorAll('.text-box');
+            
+            previewTexts.forEach(text => text.remove());
+            textBoxes.forEach(box => box.style.opacity = '1');
+        }
+
+        // Get sample text based on field name
+        function getSampleText(fieldName) {
+            const sampleTexts = {
+                'STUDENT_NAME': 'John Doe',
+                'POS': '1st Place',
+                'event_name': 'Annual Tech Conference 2024',
+                'organizer_name': 'Tech Institute',
+                'search_id': 'TECH001',
+                'CERTIFICATE_ID': 'CERT-2024-001',
+                'DATE': '15th March 2024',
+                'COURSE': 'Advanced Web Development',
+                'GRADE': 'A+',
+                'SCORE': '95%',
+                'DURATION': '6 Months',
+                'INSTRUCTOR': 'Dr. Sarah Johnson',
+                'DEPARTMENT': 'Computer Science',
+                'SEMESTER': 'Spring 2024',
+                'YEAR': '2024'
+            };
+            
+            return sampleTexts[fieldName] || `Sample ${fieldName}`;
+        }
+
+        // Update preview position when text box is moved
+        function updatePreviewPosition(textBox) {
+            const fieldName = textBox.dataset.field;
+            const previewText = canvasElement.querySelector(`.preview-text[data-field="${fieldName}"]`);
+            
+            if (previewText) {
+                previewText.style.left = textBox.style.left;
+                previewText.style.top = textBox.style.top;
+                previewText.style.width = textBox.style.width;
+                previewText.style.height = textBox.style.height;
+                previewText.style.fontSize = textBox.style.fontSize;
+            }
+        }
     </script>
 </body>
 
