@@ -1024,6 +1024,9 @@
         window.testFirebaseStorageUpload = testFirebaseStorageUpload;
         window.checkFirebaseStorageFiles = listFirebaseStorageFiles;
         window.verifyCertificateUploads = verifyCertificateUploads;
+        window.listCertificatesBySearchId = listCertificatesBySearchId;
+        window.verifyDownloadLinksInDatabase = verifyDownloadLinksInDatabase;
+        window.regenerateMissingDownloadLinks = regenerateMissingDownloadLinks;
         });
 
         // Test Firebase connection
@@ -2596,9 +2599,11 @@
                         return;
                     }
                     
-                    // Create unique filename with timestamp
+                    // Create folder structure: certificates/search_id/certificate_doc_id_timestamp.png
                     const timestamp = Date.now();
-                    const uniqueFileName = `certificates/${certificateDocId}_${timestamp}.png`;
+                    const searchId = certificateData.search_id || 'unknown';
+                    const sanitizedSearchId = searchId.replace(/[^a-zA-Z0-9_-]/g, '_'); // Sanitize for folder name
+                    const uniqueFileName = `certificates/${sanitizedSearchId}/${certificateDocId}_${timestamp}.png`;
                     const storageRef = storage.ref(uniqueFileName);
                     
                     // Show upload progress
@@ -2899,7 +2904,7 @@
             reader.readAsArrayBuffer(file);
         }
 
-        // Upload bulk data - IMPROVED VERSION
+        // Upload bulk data - IMPROVED VERSION WITH CERTIFICATE GENERATION
         function uploadBulkData(certificateId, data) {
             // Show progress bar
             const progressContainer = document.getElementById('uploadProgressContainer');
@@ -2908,86 +2913,303 @@
 
             progressContainer.style.display = 'block';
             progressBar.style.width = '0%';
-            statusDiv.innerHTML = '<p class="text-center">Uploading data...</p>';
+            statusDiv.innerHTML = '<p class="text-center">Uploading data and generating certificates...</p>';
 
-            // Batch uploads using Firestore batch
-            const batches = [];
-            const batchSize = 500; // Firestore limit is 500 operations per batch
-
-            for (let i = 0; i < data.length; i += batchSize) {
-                const batch = db.batch();
-                const chunk = data.slice(i, i + batchSize);
-
-                chunk.forEach(item => {
-                    // Prepare certificate data
-                    const certificateData = {
-                        certificate_id: certificateId,
-                        event_name: String(item.event_name || ''),
-                        organizer_name: String(item.organizer_name || ''),
-                        search_id: String(item.search_id || '')
-                    };
-
-                    // Add other fields with proper type conversion
-                    Object.keys(item).forEach(key => {
-                        if (!['event_name', 'organizer_name', 'search_id'].includes(key)) {
-                            const value = item[key];
-
-                            // Handle different data types appropriately
-                            if (typeof value === 'number') {
-                                certificateData[key] = value;
-                            } else if (typeof value === 'boolean') {
-                                certificateData[key] = value;
-                            } else if (value instanceof Date) {
-                                certificateData[key] = value;
-                            } else if (value === null || value === undefined) {
-                                certificateData[key] = null;
-                            } else {
-                                // Default to string for other types
-                                certificateData[key] = String(value);
-                            }
-                        }
-                    });
-
-                    // Add to batch
-                    const docRef = db.collection('certificate_list').doc();
-                    batch.set(docRef, certificateData);
-                });
-
-                batches.push(batch);
-            }
-
-            // Execute batches sequentially
-            let completed = 0;
-            const totalBatches = batches.length;
-
-            const executeNextBatch = (index) => {
-                if (index >= totalBatches) {
-                    // All batches completed
-                    progressBar.style.width = '100%';
-                    statusDiv.innerHTML = `<p class="text-center text-success">Upload completed! ${data.length} certificates added.</p>`;
-                    showAlert(`Successfully uploaded ${data.length} certificates`, 'success');
+            // First, load the template and text boxes for certificate generation
+            Promise.all([
+                db.collection('certificate_template').doc(certificateId).get(),
+                db.collection('certificate_template').doc(certificateId).collection('tBox').get()
+            ]).then(([templateDoc, textBoxesSnapshot]) => {
+                if (!templateDoc.exists) {
+                    showAlert('Certificate template not found', 'danger');
                     return;
                 }
 
-                batches[index].commit()
+                const template = templateDoc.data();
+                const textBoxes = [];
+                textBoxesSnapshot.forEach(doc => {
+                    textBoxes.push(doc.data());
+                });
+
+                // Batch uploads using Firestore batch
+                const batches = [];
+                const batchSize = 500; // Firestore limit is 500 operations per batch
+                const certificateDocIds = []; // Store document IDs for certificate generation
+
+                for (let i = 0; i < data.length; i += batchSize) {
+                    const batch = db.batch();
+                    const chunk = data.slice(i, i + batchSize);
+
+                    chunk.forEach(item => {
+                        // Prepare certificate data
+                        const certificateData = {
+                            certificate_id: certificateId,
+                            event_name: String(item.event_name || ''),
+                            organizer_name: String(item.organizer_name || ''),
+                            search_id: String(item.search_id || '')
+                        };
+
+                        // Add other fields with proper type conversion
+                        Object.keys(item).forEach(key => {
+                            if (!['event_name', 'organizer_name', 'search_id'].includes(key)) {
+                                const value = item[key];
+
+                                // Handle different data types appropriately
+                                if (typeof value === 'number') {
+                                    certificateData[key] = value;
+                                } else if (typeof value === 'boolean') {
+                                    certificateData[key] = value;
+                                } else if (value instanceof Date) {
+                                    certificateData[key] = value;
+                                } else if (value === null || value === undefined) {
+                                    certificateData[key] = null;
+                                } else {
+                                    // Default to string for other types
+                                    certificateData[key] = String(value);
+                                }
+                            }
+                        });
+
+                        // Add to batch
+                        const docRef = db.collection('certificate_list').doc();
+                        batch.set(docRef, certificateData);
+                        certificateDocIds.push({ docId: docRef.id, data: certificateData });
+                    });
+
+                    batches.push(batch);
+                }
+
+                // Execute batches sequentially
+                let completed = 0;
+                const totalBatches = batches.length;
+
+                const executeNextBatch = (index) => {
+                    if (index >= totalBatches) {
+                        // All batches completed, now generate certificates
+                        statusDiv.innerHTML = `<p class="text-center text-success">Data uploaded! Now generating ${certificateDocIds.length} certificates...</p>`;
+                        generateBulkCertificates(certificateDocIds, template, textBoxes);
+                        return;
+                    }
+
+                    batches[index].commit()
+                        .then(() => {
+                            completed++;
+                            const progress = (completed / totalBatches) * 50; // First 50% for data upload
+                            progressBar.style.width = `${progress}%`;
+                            statusDiv.innerHTML = `<p class="text-center">Uploading data... ${completed} of ${totalBatches} batches (${Math.round(progress)}%)</p>`;
+
+                            // Execute next batch
+                            executeNextBatch(index + 1);
+                        })
+                        .catch(error => {
+                            console.error('Error in batch upload:', error);
+                            statusDiv.innerHTML = `<p class="text-center text-danger">Error: ${error.message}</p>`;
+                            showAlert('Error uploading certificates: ' + error.message, 'danger');
+                        });
+                };
+
+                // Start the first batch
+                executeNextBatch(0);
+            }).catch(error => {
+                console.error('Error loading template for bulk upload:', error);
+                showAlert('Error loading template: ' + error.message, 'danger');
+            });
+        }
+
+        // Generate certificates for bulk upload
+        function generateBulkCertificates(certificateDocIds, template, textBoxes) {
+            const progressBar = document.getElementById('uploadProgress');
+            const statusDiv = document.getElementById('uploadStatus');
+            
+            let completed = 0;
+            const total = certificateDocIds.length;
+            
+            const generateNextCertificate = (index) => {
+                if (index >= total) {
+                    // All certificates generated
+                    progressBar.style.width = '100%';
+                    statusDiv.innerHTML = `<p class="text-center text-success">Bulk upload completed! ${total} certificates generated and uploaded to Firebase Storage.</p>`;
+                    showAlert(`Successfully uploaded ${total} certificates with PNG files`, 'success');
+                    return;
+                }
+
+                const { docId, data } = certificateDocIds[index];
+                
+                // Generate certificate for this item
+                generateCertificateForBulkUpload(docId, data, template, textBoxes)
                     .then(() => {
                         completed++;
-                        const progress = (completed / totalBatches) * 100;
+                        const progress = 50 + (completed / total) * 50; // Second 50% for certificate generation
                         progressBar.style.width = `${progress}%`;
-                        statusDiv.innerHTML = `<p class="text-center">Uploading... ${completed} of ${totalBatches} batches (${Math.round(progress)}%)</p>`;
+                        statusDiv.innerHTML = `<p class="text-center">Generating certificates... ${completed} of ${total} (${Math.round(progress)}%)</p>`;
 
-                        // Execute next batch
-                        executeNextBatch(index + 1);
+                        // Generate next certificate
+                        generateNextCertificate(index + 1);
                     })
                     .catch(error => {
-                        console.error('Error in batch upload:', error);
-                        statusDiv.innerHTML = `<p class="text-center text-danger">Error: ${error.message}</p>`;
-                        showAlert('Error uploading certificates: ' + error.message, 'danger');
+                        console.error(`Error generating certificate for ${docId}:`, error);
+                        // Continue with next certificate even if one fails
+                        completed++;
+                        generateNextCertificate(index + 1);
                     });
             };
 
-            // Start the first batch
-            executeNextBatch(0);
+            // Start generating certificates
+            generateNextCertificate(0);
+        }
+
+        // Generate single certificate for bulk upload
+        function generateCertificateForBulkUpload(certificateDocId, certificateData, template, textBoxes) {
+            return new Promise((resolve, reject) => {
+                // Create a temporary container for the certificate
+                const tempContainer = document.createElement('div');
+                tempContainer.style.position = 'absolute';
+                tempContainer.style.left = '-9999px';
+                tempContainer.style.top = '0';
+                tempContainer.style.width = '1200px';
+                tempContainer.style.height = '800px';
+                tempContainer.style.backgroundColor = '#ffffff';
+                tempContainer.style.overflow = 'hidden';
+                
+                // Create certificate HTML
+                const certificateHtml = createCertificateHtml(certificateData, textBoxes, template);
+                tempContainer.innerHTML = certificateHtml;
+                
+                document.body.appendChild(tempContainer);
+
+                // Wait for the image to load before generating canvas
+                const img = tempContainer.querySelector('img');
+                if (img) {
+                    if (img.complete) {
+                        generateCanvasForBulkUpload(tempContainer, certificateDocId, certificateData, resolve, reject);
+                    } else {
+                        const imageTimeout = setTimeout(() => {
+                            generateCanvasForBulkUpload(tempContainer, certificateDocId, certificateData, resolve, reject);
+                        }, 5000);
+                        
+                        img.onload = () => {
+                            clearTimeout(imageTimeout);
+                            generateCanvasForBulkUpload(tempContainer, certificateDocId, certificateData, resolve, reject);
+                        };
+                        img.onerror = () => {
+                            clearTimeout(imageTimeout);
+                            generateCanvasForBulkUpload(tempContainer, certificateDocId, certificateData, resolve, reject);
+                        };
+                    }
+                } else {
+                    generateCanvasForBulkUpload(tempContainer, certificateDocId, certificateData, resolve, reject);
+                }
+            });
+        }
+
+        // Generate canvas for bulk upload
+        function generateCanvasForBulkUpload(tempContainer, certificateDocId, certificateData, resolve, reject) {
+            html2canvas(tempContainer, {
+                scale: 2,
+                useCORS: true,
+                allowTaint: true,
+                backgroundColor: '#ffffff',
+                width: 1200,
+                height: 800,
+                logging: false
+            }).then(canvas => {
+                // Create download link
+                const fileName = `certificate_${certificateData.search_id || certificateData.event_name.replace(/\s+/g, '_')}.png`;
+                
+                // Upload to Firebase Storage with improved error handling
+                canvas.toBlob((blob) => {
+                    if (!blob) {
+                        console.error('Failed to generate certificate image blob');
+                        document.body.removeChild(tempContainer);
+                        reject(new Error('Failed to generate certificate image blob'));
+                        return;
+                    }
+                    
+                    // Create folder structure: certificates/search_id/certificate_doc_id_timestamp.png
+                    const timestamp = Date.now();
+                    const searchId = certificateData.search_id || 'unknown';
+                    const sanitizedSearchId = searchId.replace(/[^a-zA-Z0-9_-]/g, '_');
+                    const uniqueFileName = `certificates/${sanitizedSearchId}/${certificateDocId}_${timestamp}.png`;
+                    const storageRef = storage.ref(uniqueFileName);
+                    
+                    // Upload with metadata
+                    const uploadTask = storageRef.put(blob, {
+                        contentType: 'image/png',
+                        customMetadata: {
+                            certificateId: certificateDocId,
+                            eventName: certificateData.event_name || '',
+                            organizerName: certificateData.organizer_name || '',
+                            searchId: certificateData.search_id || '',
+                            generatedAt: new Date().toISOString(),
+                            bulkUpload: 'true'
+                        }
+                    });
+                    
+                    // Monitor upload progress
+                    uploadTask.on('state_changed', 
+                        (snapshot) => {
+                            const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                            console.log(`Bulk upload progress for ${certificateDocId}: ${progress}%`);
+                        },
+                        (error) => {
+                            console.error(`Upload error for ${certificateDocId}:`, error);
+                            document.body.removeChild(tempContainer);
+                            reject(error);
+                        },
+                        () => {
+                            // Upload completed successfully
+                            uploadTask.snapshot.ref.getDownloadURL().then((downloadURL) => {
+                                console.log(`Certificate uploaded successfully for ${certificateDocId}:`, downloadURL);
+                                
+                                // Generate unique download links
+                                const links = generateDownloadLinks(certificateDocId, certificateData.search_id);
+                                
+                                // Store download links in Firebase with enhanced metadata
+                                const updateData = {
+                                    download_storage_url: downloadURL,
+                                    download_storage_path: uniqueFileName,
+                                    download_file_name: fileName,
+                                    download_file_size: blob.size,
+                                    download_file_format: 'PNG',
+                                    download_generated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                                    download_count: 0,
+                                    download_links: {
+                                        direct_url: links.direct_url,
+                                        search_url: links.search_url,
+                                        token_url: links.token_url,
+                                        api_url: links.api_url,
+                                        generated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                                        unique_token: links.token_url.split('token=')[1]
+                                    },
+                                    // Add certificate metadata
+                                    certificate_metadata: {
+                                        event_name: certificateData.event_name,
+                                        organizer_name: certificateData.organizer_name,
+                                        search_id: certificateData.search_id,
+                                        template_id: certificateData.certificate_id,
+                                        generated_timestamp: timestamp,
+                                        bulk_upload: true
+                                    }
+                                };
+
+                                return db.collection('certificate_list').doc(certificateDocId).update(updateData);
+                            }).then(() => {
+                                console.log(`Download links stored for ${certificateDocId}`);
+                                document.body.removeChild(tempContainer);
+                                resolve();
+                            }).catch(error => {
+                                console.error(`Error storing download links for ${certificateDocId}:`, error);
+                                document.body.removeChild(tempContainer);
+                                reject(error);
+                            });
+                        }
+                    );
+                }, 'image/png', 0.9); // Use 0.9 quality to reduce size
+            }).catch(error => {
+                console.error(`Error generating certificate image for ${certificateDocId}:`, error);
+                document.body.removeChild(tempContainer);
+                reject(error);
+            });
         }
 
         // Download sample template
@@ -3226,10 +3448,12 @@
                     return;
                 }
                 
-                // Create unique filename with timestamp
-                const timestamp = Date.now();
-                const uniqueFileName = `certificates/${certificateId}_${timestamp}.png`;
-                const storageRef = storage.ref(uniqueFileName);
+                                    // Create folder structure: certificates/search_id/certificate_id_timestamp.png
+                    const timestamp = Date.now();
+                    const searchId = certificateData.search_id || 'unknown';
+                    const sanitizedSearchId = searchId.replace(/[^a-zA-Z0-9_-]/g, '_'); // Sanitize for folder name
+                    const uniqueFileName = `certificates/${sanitizedSearchId}/${certificateId}_${timestamp}.png`;
+                    const storageRef = storage.ref(uniqueFileName);
                 
                 // Show upload progress
                 showAlert('Uploading certificate to Firebase Storage...', 'info');
@@ -4098,11 +4322,32 @@
             const storageRef = storage.ref('certificates');
             return storageRef.listAll().then((result) => {
                 console.log('Firebase Storage files:', result.items);
-                return result.items;
+                
+                // Organize by search ID folders
+                const folders = {};
+                result.items.forEach((item) => {
+                    const pathParts = item.name.split('/');
+                    if (pathParts.length >= 2) {
+                        const searchId = pathParts[0];
+                        const fileName = pathParts[1];
+                        
+                        if (!folders[searchId]) {
+                            folders[searchId] = [];
+                        }
+                        folders[searchId].push({
+                            name: fileName,
+                            fullPath: item.name,
+                            ref: item
+                        });
+                    }
+                });
+                
+                console.log('Organized by search ID folders:', folders);
+                return { items: result.items, folders: folders };
             }).catch(error => {
                 console.error('Error listing Firebase Storage files:', error);
                 showAlert('Error listing storage files: ' + error.message, 'warning');
-                return [];
+                return { items: [], folders: {} };
             });
         }
 
@@ -4126,6 +4371,36 @@
                 console.error('Error getting download URL:', error);
                 showAlert('Error getting download URL: ' + error.message, 'danger');
                 return null;
+            });
+        }
+
+        // List certificates by search ID
+        function listCertificatesBySearchId(searchId) {
+            const sanitizedSearchId = searchId.replace(/[^a-zA-Z0-9_-]/g, '_');
+            const folderRef = storage.ref(`certificates/${sanitizedSearchId}`);
+            
+            return folderRef.listAll().then((result) => {
+                console.log(`Certificates for search ID "${searchId}":`, result.items);
+                
+                const certificates = result.items.map(item => ({
+                    name: item.name,
+                    fullPath: item.fullPath,
+                    ref: item
+                }));
+                
+                if (certificates.length === 0) {
+                    console.log(`No certificates found for search ID: ${searchId}`);
+                    showAlert(`No certificates found for search ID: ${searchId}`, 'info');
+                } else {
+                    console.log(`Found ${certificates.length} certificates for search ID: ${searchId}`);
+                    showAlert(`Found ${certificates.length} certificates for search ID: ${searchId}`, 'success');
+                }
+                
+                return certificates;
+            }).catch(error => {
+                console.error(`Error listing certificates for search ID ${searchId}:`, error);
+                showAlert(`Error listing certificates for search ID ${searchId}: ${error.message}`, 'danger');
+                return [];
             });
         }
 
@@ -4190,31 +4465,162 @@
             
             const storageRef = storage.ref('certificates');
             storageRef.listAll().then((result) => {
-                console.log('Found certificate files in Firebase Storage:');
-                result.items.forEach((item, index) => {
-                    console.log(`${index + 1}. ${item.name}`);
-                    // Get metadata for each file
-                    item.getMetadata().then((metadata) => {
-                        console.log(`   - Size: ${metadata.size} bytes`);
-                        console.log(`   - Created: ${metadata.timeCreated}`);
-                        if (metadata.customMetadata) {
-                            console.log(`   - Event: ${metadata.customMetadata.eventName}`);
-                            console.log(`   - Organizer: ${metadata.customMetadata.organizerName}`);
+                console.log('Found certificate folders in Firebase Storage:');
+                
+                // Group files by folder (search ID)
+                const folders = {};
+                result.items.forEach((item) => {
+                    const pathParts = item.name.split('/');
+                    if (pathParts.length >= 2) {
+                        const searchId = pathParts[0]; // First part is the search ID folder
+                        const fileName = pathParts[1]; // Second part is the file name
+                        
+                        if (!folders[searchId]) {
+                            folders[searchId] = [];
                         }
-                    }).catch(error => {
-                        console.log(`   - Error getting metadata: ${error.message}`);
+                        folders[searchId].push(fileName);
+                    }
+                });
+                
+                // Display organized results
+                Object.keys(folders).forEach((searchId, index) => {
+                    console.log(`${index + 1}. Search ID: "${searchId}"`);
+                    console.log(`   Files in this folder:`);
+                    folders[searchId].forEach((fileName, fileIndex) => {
+                        console.log(`     ${fileIndex + 1}. ${fileName}`);
                     });
                 });
                 
-                if (result.items.length === 0) {
+                if (Object.keys(folders).length === 0) {
                     console.log('No certificate files found in Firebase Storage');
                     showAlert('No certificate files found in Firebase Storage', 'warning');
                 } else {
-                    showAlert(`Found ${result.items.length} certificate files in Firebase Storage`, 'success');
+                    const totalFiles = Object.values(folders).flat().length;
+                    showAlert(`Found ${Object.keys(folders).length} search ID folders with ${totalFiles} total certificate files`, 'success');
                 }
             }).catch(error => {
                 console.error('Error listing Firebase Storage files:', error);
                 showAlert('Error checking Firebase Storage: ' + error.message, 'danger');
+            });
+        }
+
+        // Verify download links in Firebase database
+        function verifyDownloadLinksInDatabase() {
+            console.log('Checking Firebase database for download links...');
+            
+            db.collection('certificate_list').get().then((querySnapshot) => {
+                console.log('Found certificates in database:');
+                
+                let certificatesWithLinks = 0;
+                let certificatesWithoutLinks = 0;
+                
+                querySnapshot.forEach((doc) => {
+                    const cert = doc.data();
+                    const hasDownloadLinks = cert.download_storage_url || cert.download_links;
+                    
+                    console.log(`Certificate ID: ${doc.id}`);
+                    console.log(`  - Event: ${cert.event_name || 'N/A'}`);
+                    console.log(`  - Search ID: ${cert.search_id || 'N/A'}`);
+                    console.log(`  - Has download links: ${hasDownloadLinks ? 'YES' : 'NO'}`);
+                    
+                    if (hasDownloadLinks) {
+                        certificatesWithLinks++;
+                        console.log(`  - Storage URL: ${cert.download_storage_url || 'N/A'}`);
+                        console.log(`  - File name: ${cert.download_file_name || 'N/A'}`);
+                        console.log(`  - File size: ${cert.download_file_size || 'N/A'} bytes`);
+                        if (cert.download_links) {
+                            console.log(`  - Direct URL: ${cert.download_links.direct_url || 'N/A'}`);
+                            console.log(`  - Token URL: ${cert.download_links.token_url || 'N/A'}`);
+                        }
+                    } else {
+                        certificatesWithoutLinks++;
+                    }
+                    console.log('  ---');
+                });
+                
+                console.log(`Summary:`);
+                console.log(`  - Total certificates: ${querySnapshot.size}`);
+                console.log(`  - With download links: ${certificatesWithLinks}`);
+                console.log(`  - Without download links: ${certificatesWithoutLinks}`);
+                
+                if (certificatesWithLinks > 0) {
+                    showAlert(`Found ${certificatesWithLinks} certificates with download links in database`, 'success');
+                } else {
+                    showAlert('No certificates with download links found in database', 'warning');
+                }
+                
+                if (certificatesWithoutLinks > 0) {
+                    showAlert(`${certificatesWithoutLinks} certificates missing download links`, 'warning');
+                }
+            }).catch(error => {
+                console.error('Error checking database for download links:', error);
+                showAlert('Error checking database: ' + error.message, 'danger');
+            });
+        }
+
+        // Regenerate download links for all certificates missing them
+        function regenerateMissingDownloadLinks() {
+            console.log('Finding certificates without download links...');
+            
+            db.collection('certificate_list').get().then((querySnapshot) => {
+                const certificatesWithoutLinks = [];
+                
+                querySnapshot.forEach((doc) => {
+                    const cert = doc.data();
+                    const hasDownloadLinks = cert.download_storage_url || cert.download_links;
+                    
+                    if (!hasDownloadLinks) {
+                        certificatesWithoutLinks.push({
+                            docId: doc.id,
+                            data: cert
+                        });
+                    }
+                });
+                
+                if (certificatesWithoutLinks.length === 0) {
+                    showAlert('All certificates already have download links!', 'success');
+                    return;
+                }
+                
+                console.log(`Found ${certificatesWithoutLinks.length} certificates without download links`);
+                showAlert(`Found ${certificatesWithoutLinks.length} certificates without download links. Starting regeneration...`, 'info');
+                
+                // Process certificates one by one
+                let processed = 0;
+                const total = certificatesWithoutLinks.length;
+                
+                const processNextCertificate = (index) => {
+                    if (index >= total) {
+                        showAlert(`Successfully regenerated download links for ${total} certificates!`, 'success');
+                        return;
+                    }
+                    
+                    const { docId, data } = certificatesWithoutLinks[index];
+                    console.log(`Processing certificate ${index + 1}/${total}: ${docId}`);
+                    
+                    // Generate download links for this certificate
+                    generateAndStoreDownloadLink(docId, data)
+                        .then(() => {
+                            processed++;
+                            console.log(`Completed ${processed}/${total}`);
+                            showAlert(`Regenerated download links for ${processed}/${total} certificates`, 'info');
+                            
+                            // Process next certificate
+                            processNextCertificate(index + 1);
+                        })
+                        .catch(error => {
+                            console.error(`Error regenerating download links for ${docId}:`, error);
+                            processed++;
+                            // Continue with next certificate even if one fails
+                            processNextCertificate(index + 1);
+                        });
+                };
+                
+                // Start processing
+                processNextCertificate(0);
+            }).catch(error => {
+                console.error('Error finding certificates without download links:', error);
+                showAlert('Error finding certificates: ' + error.message, 'danger');
             });
         }
 
