@@ -1242,13 +1242,55 @@
             }
 
             const certificateImage = document.getElementById('certificateImage').value.trim();
-            if (!certificateImage && !certificateImg.src) {
+            const imageFile = document.getElementById('certificateImageFile').files[0];
+            
+            if (!certificateImage && !certificateImg.src && !imageFile) {
                 showAlert('Please provide a certificate image URL or upload an image', 'danger');
                 return;
             }
 
             const orientation = document.querySelector('input[name="orientation"]:checked').value;
 
+            // Show loading state
+            showAlert('Saving certificate template...', 'info');
+
+            // Upload image to Firebase Storage if a file is selected
+            if (imageFile) {
+                uploadImageToStorage(certificateId, imageFile, orientation, textBoxes);
+            } else {
+                // Use existing URL
+                saveTemplateToFirestore(certificateId, certificateImage || certificateImg.src, orientation, textBoxes);
+            }
+        }
+
+        // Upload image to Firebase Storage
+        function uploadImageToStorage(certificateId, imageFile, orientation, textBoxes) {
+            const storageRef = firebase.storage().ref();
+            const imageRef = storageRef.child(`certificate-templates/${certificateId}/${imageFile.name}`);
+            
+            // Show upload progress
+            showAlert('Uploading image to hosting...', 'info');
+            
+            imageRef.put(imageFile)
+                .then(snapshot => {
+                    console.log('Image uploaded successfully');
+                    return snapshot.ref.getDownloadURL();
+                })
+                .then(downloadURL => {
+                    console.log('Image URL:', downloadURL);
+                    showAlert('Image uploaded successfully!', 'success');
+                    
+                    // Save template with hosted image URL
+                    saveTemplateToFirestore(certificateId, downloadURL, orientation, textBoxes);
+                })
+                .catch(error => {
+                    console.error('Error uploading image:', error);
+                    showAlert('Error uploading image: ' + error.message, 'danger');
+                });
+        }
+
+        // Save template to Firestore
+        function saveTemplateToFirestore(certificateId, imageUrl, orientation, textBoxes) {
             // First, delete all existing text boxes in the subcollection
             // This ensures deleted text boxes don't reappear
             db.collection('certificate_template').doc(certificateId).get()
@@ -1266,7 +1308,7 @@
                 .then(() => {
                     // Now save the template main document
                     return db.collection('certificate_template').doc(certificateId).set({
-                        certificate_image: certificateImage || certificateImg.src,
+                        certificate_image: imageUrl,
                         mode: orientation
                     });
                 })
@@ -1436,6 +1478,9 @@
         function loadTemplateById(templateId) {
             // Clear existing text boxes
             clearTextBoxes();
+
+            // Clear file input
+            document.getElementById('certificateImageFile').value = '';
 
             // Get template data
             db.collection('certificate_template').doc(templateId).get()
@@ -1827,6 +1872,16 @@
             updateTextBoxesTable();
         }
 
+        // Clear template form
+        function clearTemplateForm() {
+            document.getElementById('certificateId').value = '';
+            document.getElementById('certificateImage').value = '';
+            document.getElementById('certificateImageFile').value = '';
+            certificateImg.src = '';
+            clearTextBoxes();
+            showAlert('Template form cleared', 'info');
+        }
+
         // Update the text boxes table
         function updateTextBoxesTable() {
             const tableBody = document.getElementById('textBoxesTable');
@@ -1885,19 +1940,19 @@
                 return;
             }
 
-            // Create a local URL for the image (temporary solution)
+            // Show loading state
+            showAlert('Processing image...', 'info');
+
+            // Create a local URL for preview
             const localURL = URL.createObjectURL(file);
-            document.getElementById('certificateImage').value = localURL;
             certificateImg.src = localURL;
-            showAlert('Image loaded successfully! (Note: This is a local preview. For production, use a web server.)', 'success');
             
-            // Uncomment the following code when you have CORS configured or are using a web server
-            /*
-            // Create a storage reference
-            const storageRef = storage.ref(`certificate_templates/${Date.now()}_${file.name}`);
+            // Upload to Firebase Storage
+            const storageRef = firebase.storage().ref();
+            const imageRef = storageRef.child(`certificate-templates/preview/${Date.now()}_${file.name}`);
 
             // Upload the file
-            const uploadTask = storageRef.put(file);
+            const uploadTask = imageRef.put(file);
 
             // Listen for state changes
             uploadTask.on('state_changed',
@@ -1905,6 +1960,7 @@
                     // Progress function
                     const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
                     console.log('Upload is ' + progress + '% done');
+                    showAlert(`Uploading image... ${Math.round(progress)}%`, 'info');
                 },
                 (error) => {
                     // Error function
@@ -1916,12 +1972,10 @@
                     uploadTask.snapshot.ref.getDownloadURL().then((downloadURL) => {
                         console.log('File available at', downloadURL);
                         document.getElementById('certificateImage').value = downloadURL;
-                        certificateImg.src = downloadURL;
-                        showAlert('Image uploaded successfully!', 'success');
+                        showAlert('Image uploaded to hosting successfully!', 'success');
                     });
                 }
             );
-            */
         }
 
         // Adjust zoom
