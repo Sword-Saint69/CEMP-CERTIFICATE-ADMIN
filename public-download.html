@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Certificate Download - ATHLOS 2025</title>
+    <style>
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .loading-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            padding: 3rem;
+            text-align: center;
+            max-width: 400px;
+            width: 100%;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #6366f1;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            padding: 3rem;
+            text-align: center;
+            max-width: 400px;
+            width: 100%;
+        }
+
+        .error-icon {
+            font-size: 3rem;
+            color: #ef4444;
+            margin-bottom: 1rem;
+        }
+
+        .btn {
+            background: #6366f1;
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            font-weight: 500;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+            margin-top: 1rem;
+        }
+
+        .btn:hover {
+            background: #5855eb;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="loadingContainer" class="loading-container">
+        <div class="spinner"></div>
+        <h3>Preparing Certificate Download...</h3>
+        <p>Please wait while we generate your certificate</p>
+    </div>
+
+    <div id="errorContainer" class="error-container" style="display: none;">
+        <div class="error-icon">⚠️</div>
+        <h3>Certificate Not Found</h3>
+        <p id="errorMessage">The certificate you're looking for could not be found.</p>
+        <a href="javascript:history.back()" class="btn">Go Back</a>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-storage-compat.js"></script>
+    <!-- html2canvas -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+    <script>
+        // Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyAHrvhT6GKehlEcxMx5IKGp9kKuyDimHbU",
+            authDomain: "athlos-25.firebaseapp.com",
+            projectId: "athlos-25",
+            storageBucket: "athlos-25.firebasestorage.app",
+            messagingSenderId: "1040745981700",
+            appId: "1:1040745981700:web:94c1b7d8fe52da723ad251",
+            measurementId: "G-S4TMQLBL2N"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+
+        // Global variables
+        let certificateData = null;
+        let templateData = null;
+
+        // Get URL parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const certificateId = urlParams.get('id');
+        const searchId = urlParams.get('search_id');
+
+        // Initialize the page
+        document.addEventListener('DOMContentLoaded', function() {
+            if (!certificateId && !searchId) {
+                showError('No certificate ID or search ID provided.');
+                return;
+            }
+
+            loadCertificate();
+        });
+
+        // Load certificate data
+        function loadCertificate() {
+            console.log('Loading certificate with ID:', certificateId, 'or search ID:', searchId);
+            
+            let query;
+
+            if (certificateId) {
+                // Load by certificate ID
+                query = db.collection('certificate_list').doc(certificateId);
+            } else if (searchId) {
+                // Load by search ID
+                query = db.collection('certificate_list').where('search_id', '==', searchId);
+            } else {
+                showError('No certificate ID or search ID provided.');
+                return;
+            }
+
+            query.get()
+                .then((result) => {
+                    if (certificateId) {
+                        // Single document query
+                        if (result.exists) {
+                            certificateData = { id: result.id, ...result.data() };
+                            console.log('Certificate loaded by ID:', certificateData);
+                            loadTemplateAndDownload();
+                        } else {
+                            console.error('Certificate not found with ID:', certificateId);
+                            showError('Certificate not found.');
+                        }
+                    } else {
+                        // Query snapshot
+                        if (!result.empty) {
+                            const doc = result.docs[0];
+                            certificateData = { id: doc.id, ...doc.data() };
+                            console.log('Certificate loaded by search ID:', certificateData);
+                            loadTemplateAndDownload();
+                        } else {
+                            console.error('Certificate not found with search ID:', searchId);
+                            showError('No certificate found with the provided search ID.');
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading certificate:', error);
+                    showError('Error loading certificate: ' + error.message);
+                });
+        }
+
+        // Load template and download certificate
+        function loadTemplateAndDownload() {
+            console.log('Loading template for certificate:', certificateData.certificate_id);
+            
+            // First get the template
+            db.collection('certificate_template').doc(certificateData.certificate_id).get()
+                .then(templateDoc => {
+                    if (!templateDoc.exists) {
+                        console.error('Template not found:', certificateData.certificate_id);
+                        showError('Certificate template not found.');
+                        return;
+                    }
+
+                    templateData = templateDoc.data();
+                    console.log('Template loaded:', templateData);
+                    
+                    // Get text boxes for the template
+                    return db.collection('certificate_template').doc(certificateData.certificate_id).collection('tBox').get();
+                })
+                .then(textBoxesSnapshot => {
+                    if (!textBoxesSnapshot) {
+                        console.error('No text boxes found for template');
+                        showError('No text boxes found for this template.');
+                        return;
+                    }
+
+                    const textBoxes = [];
+                    textBoxesSnapshot.forEach(doc => {
+                        textBoxes.push(doc.data());
+                    });
+
+                    console.log('Text boxes loaded:', textBoxes.length, 'boxes');
+                    generateAndDownloadCertificate(textBoxes);
+                })
+                .catch(error => {
+                    console.error('Error loading template:', error);
+                    showError('Error loading template: ' + error.message);
+                });
+        }
+
+        // Generate and download certificate
+        function generateAndDownloadCertificate(textBoxes) {
+            // Create certificate HTML
+            const certificateHtml = createCertificateHtml(textBoxes);
+            
+            // Create temporary container
+            const tempContainer = document.createElement('div');
+            tempContainer.style.position = 'absolute';
+            tempContainer.style.left = '-9999px';
+            tempContainer.style.top = '0';
+            tempContainer.innerHTML = certificateHtml;
+            document.body.appendChild(tempContainer);
+
+            // Get the certificate element
+            const certificateElement = tempContainer.querySelector('.certificate-container');
+            
+            // Wait for image to load
+            const img = certificateElement.querySelector('img');
+            if (img && !img.complete) {
+                img.onload = () => generateCertificateImage(certificateElement);
+            } else {
+                generateCertificateImage(certificateElement);
+            }
+        }
+
+        // Create certificate HTML
+        function createCertificateHtml(textBoxes) {
+            const imgSrc = templateData.certificate_image || 'https://via.placeholder.com/1200x800/ffffff/cccccc?text=Certificate+Template';
+            
+            console.log('Certificate template image source:', imgSrc);
+            console.log('Template data:', templateData);
+            
+            // Create a gradient background as fallback
+            const fallbackBackground = `
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                border: 8px solid #f8f9fa;
+                border-radius: 20px;
+            `;
+            
+            let certificateHtml = `
+                <div class="certificate-container" style="position: relative; width: 1200px; height: 800px; ${fallbackBackground}; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                    <img src="${imgSrc}" style="width: 100%; height: 100%; object-fit: cover; display: block;" crossorigin="anonymous">
+            `;
+            
+            // Add text boxes with data
+            textBoxes.forEach(textBox => {
+                const fieldName = textBox.field;
+                let fieldValue = '';
+                
+                // Get value from certificate data
+                if (certificateData[fieldName]) {
+                    fieldValue = certificateData[fieldName];
+                } else if (fieldName === 'event_name') {
+                    fieldValue = certificateData.event_name || '';
+                } else if (fieldName === 'organizer_name') {
+                    fieldValue = certificateData.organizer_name || '';
+                } else if (fieldName === 'search_id') {
+                    fieldValue = certificateData.search_id || '';
+                } else {
+                    fieldValue = `[${fieldName}]`;
+                }
+                
+                const left = parseInt(textBox.left);
+                const top = parseInt(textBox.top);
+                const width = parseInt(textBox.width);
+                const height = parseInt(textBox.height);
+                const fontSize = parseInt(textBox.font_size);
+                const fontStyle = parseInt(textBox.style);
+                
+                // Scale positions for 1200x800 dimensions
+                const scaleX = 1200 / 600; // Assuming original preview was 600px wide
+                const scaleY = 800 / 400;   // Assuming original preview was 400px tall
+                
+                const scaledLeft = left * scaleX;
+                const scaledTop = top * scaleY;
+                const scaledWidth = width * scaleX;
+                const scaledHeight = height * scaleY;
+                const scaledFontSize = fontSize * Math.min(scaleX, scaleY);
+                
+                certificateHtml += `
+                    <div style="
+                        position: absolute;
+                        left: ${scaledLeft}px;
+                        top: ${scaledTop}px;
+                        width: ${scaledWidth}px;
+                        height: ${scaledHeight}px;
+                        font-family: ${fontStyle === 1 ? 'cursive' : 'Arial, sans-serif'};
+                        font-size: ${scaledFontSize}px;
+                        color: #1e293b;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        text-align: center;
+                        font-weight: bold;
+                        text-shadow: 2px 2px 4px rgba(255,255,255,0.9), 1px 1px 2px rgba(0,0,0,0.3);
+                        background: rgba(255, 255, 255, 0.1);
+                        border-radius: 4px;
+                        padding: 4px;
+                    ">${fieldValue}</div>
+                `;
+            });
+            
+            certificateHtml += '</div>';
+            return certificateHtml;
+        }
+
+        // Generate certificate image for download
+        function generateCertificateImage(certificateElement) {
+            console.log('Generating certificate image for download...');
+
+            // Generate canvas
+            html2canvas(certificateElement, {
+                scale: 2,
+                useCORS: true,
+                allowTaint: true,
+                backgroundColor: '#ffffff',
+                width: 1200,
+                height: 800,
+                logging: false
+            }).then(canvas => {
+                // Create download link
+                const link = document.createElement('a');
+                link.download = `certificate-${certificateData.search_id || certificateData.id}.png`;
+                link.href = canvas.toDataURL('image/png', 1.0);
+                
+                // Trigger download
+                link.click();
+                
+                // Clean up
+                const tempContainer = certificateElement.parentElement;
+                if (tempContainer) {
+                    document.body.removeChild(tempContainer);
+                }
+                
+                // Close the window after a short delay
+                setTimeout(() => {
+                    window.close();
+                }, 1000);
+                
+            }).catch(error => {
+                console.error('Error generating certificate image:', error);
+                showError('Error generating certificate image. Please try again.');
+                
+                // Clean up
+                const tempContainer = certificateElement.parentElement;
+                if (tempContainer) {
+                    document.body.removeChild(tempContainer);
+                }
+            });
+        }
+
+        // Show error state
+        function showError(message) {
+            document.getElementById('loadingContainer').style.display = 'none';
+            document.getElementById('errorContainer').style.display = 'block';
+            document.getElementById('errorMessage').textContent = message;
+        }
+    </script>
+</body>
+</html> 
