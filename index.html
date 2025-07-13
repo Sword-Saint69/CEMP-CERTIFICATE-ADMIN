@@ -2500,6 +2500,11 @@
             
             // Create certificate HTML
             const certificateHtml = createCertificateHtml(certificateData, textBoxes, template);
+            
+            // Debug: Log certificate data
+            console.log('Certificate data being used:', certificateData);
+            console.log('Text boxes:', textBoxes);
+            console.log('Template:', template);
             tempContainer.innerHTML = certificateHtml;
             
             document.body.appendChild(tempContainer);
@@ -3709,17 +3714,25 @@
                 const fieldName = textBox.field;
                 let fieldValue = '';
                 
+                console.log(`Processing field: ${fieldName}`);
+                console.log(`Certificate data for ${fieldName}:`, cert[fieldName]);
+                
                 // Get value from certificate data
                 if (cert[fieldName]) {
                     fieldValue = cert[fieldName];
+                    console.log(`Found direct match: ${fieldValue}`);
                 } else if (fieldName === 'event_name') {
                     fieldValue = cert.event_name || '';
+                    console.log(`Using event_name: ${fieldValue}`);
                 } else if (fieldName === 'organizer_name') {
                     fieldValue = cert.organizer_name || '';
+                    console.log(`Using organizer_name: ${fieldValue}`);
                 } else if (fieldName === 'search_id') {
                     fieldValue = cert.search_id || '';
+                    console.log(`Using search_id: ${fieldValue}`);
                 } else {
                     fieldValue = `[${fieldName}]`;
+                    console.log(`Using placeholder: ${fieldValue}`);
                 }
                 
                 const left = parseInt(textBox.left);
