@@ -647,6 +647,11 @@
                                             <h2 class="mb-1 fw-bold">Certificate List</h2>
                                             <p class="text-muted mb-0">View and manage all certificates</p>
                                         </div>
+                                        <div class="ms-auto">
+                                            <button class="btn btn-primary" onclick="generateAllDownloadLinks()">
+                                                <i class="fas fa-link me-2"></i>Generate All Download Links
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -2090,11 +2095,12 @@
           <button class="btn btn-sm btn-outline-info link-btn" data-id="${cert.id}" title="Download Certificate">
             <i class="fas fa-download"></i>
           </button>
-          ${cert.download_link ? `
-            <button class="btn btn-sm btn-outline-success view-link-btn" data-id="${cert.id}" title="View Download Link">
-              <i class="fas fa-link"></i>
-            </button>
-          ` : ''}
+          <button class="btn btn-sm btn-outline-success view-link-btn" data-id="${cert.id}" title="View Download Link">
+            <i class="fas fa-link"></i>
+          </button>
+          <button class="btn btn-sm btn-outline-info generate-link-btn" data-id="${cert.id}" title="Generate Download Links">
+            <i class="fas fa-share-alt"></i>
+          </button>
           <button class="btn btn-sm btn-outline-danger delete-btn" data-id="${cert.id}">
             <i class="fas fa-trash"></i>
           </button>
@@ -2106,9 +2112,8 @@
                 row.querySelector('.view-btn').addEventListener('click', () => viewCertificate(cert.id));
                 row.querySelector('.edit-btn').addEventListener('click', () => editCertificate(cert.id));
                 row.querySelector('.link-btn').addEventListener('click', () => generateCertificateLink(cert.id));
-                if (cert.download_link) {
-                    row.querySelector('.view-link-btn').addEventListener('click', () => viewDownloadLink(cert.id));
-                }
+                row.querySelector('.view-link-btn').addEventListener('click', () => viewDownloadLink(cert.id));
+                row.querySelector('.generate-link-btn').addEventListener('click', () => showDownloadLinks(cert.id));
                 row.querySelector('.delete-btn').addEventListener('click', () => deleteCertificate(cert.id));
             });
         }
@@ -2538,22 +2543,33 @@
                 const fileName = `certificate_${certificateData.search_id || certificateData.event_name.replace(/\s+/g, '_')}.png`;
                 const downloadLink = canvas.toDataURL('image/png', 1.0);
                 
-                // Store download link in Firebase
-                // Store download info as separate fields to avoid nested entity issues
+                // Generate unique download links
+                const links = generateDownloadLinks(certificateDocId, certificateData.search_id);
+                
+                // Store download links in Firebase
                 const updateData = {
                     download_link: downloadLink,
                     download_file_name: fileName,
                     download_generated_at: firebase.firestore.FieldValue.serverTimestamp(),
-                    download_count: 0
+                    download_count: 0,
+                    download_links: {
+                        direct_url: links.direct_url,
+                        search_url: links.search_url,
+                        token_url: links.token_url,
+                        api_url: links.api_url,
+                        generated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                        unique_token: links.token_url.split('token=')[1]
+                    }
                 };
 
                 db.collection('certificate_list').doc(certificateDocId).update(updateData)
                 .then(() => {
-                    console.log('Download link stored in Firebase successfully');
-                    showAlert('Certificate saved with download link!', 'success');
+                    console.log('Download links stored in Firebase successfully');
+                    console.log('Unique download links generated:', links);
+                    showAlert('Certificate saved with unique download links!', 'success');
                 }).catch(error => {
-                    console.error('Error storing download link:', error);
-                    showAlert('Certificate saved but failed to store download link: ' + error.message, 'warning');
+                    console.error('Error storing download links:', error);
+                    showAlert('Certificate saved but failed to store download links: ' + error.message, 'warning');
                 });
                 
                 // Clean up
@@ -3286,6 +3302,291 @@
             link.click();
             document.body.removeChild(link);
             showAlert('Certificate downloaded from stored link!', 'success');
+        }
+
+        // Generate unique download links for any certificate
+        function generateDownloadLinks(certificateId, searchId) {
+            const baseUrl = window.location.origin;
+            
+            // Generate unique download token
+            const downloadToken = generateUniqueToken(certificateId, searchId);
+            
+            const links = {
+                direct_url: `${baseUrl}/public-download.html?id=${certificateId}`,
+                search_url: `${baseUrl}/public-download.html?search_id=${searchId}`,
+                token_url: `${baseUrl}/public-download.html?token=${downloadToken}`,
+                api_url: `${baseUrl}/api/certificates/${certificateId}/download`
+            };
+            
+            console.log('Generated download links:', links);
+            return links;
+        }
+
+        // Generate unique download token
+        function generateUniqueToken(certificateId, searchId) {
+            const timestamp = Date.now();
+            const random = Math.random().toString(36).substring(2, 15);
+            const hash = btoa(`${certificateId}_${searchId}_${timestamp}_${random}`);
+            return hash.substring(0, 16); // Keep it short and readable
+        }
+
+        // Auto-generate and store download links for all certificates
+        function generateAllDownloadLinks() {
+            showAlert('Generating download links for all certificates...', 'info');
+            
+            db.collection('certificate_list').get()
+                .then(querySnapshot => {
+                    let processed = 0;
+                    const total = querySnapshot.size;
+                    
+                    querySnapshot.forEach(doc => {
+                        const cert = doc.data();
+                        const certificateId = doc.id;
+                        
+                        // Generate unique download links
+                        const links = generateDownloadLinks(certificateId, cert.search_id);
+                        
+                        // Store in Firebase
+                        db.collection('certificate_list').doc(certificateId).update({
+                            download_links: {
+                                direct_url: links.direct_url,
+                                search_url: links.search_url,
+                                token_url: links.token_url,
+                                api_url: links.api_url,
+                                generated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                                unique_token: links.token_url.split('token=')[1]
+                            }
+                        }).then(() => {
+                            processed++;
+                            console.log(`Generated links for certificate ${certificateId}`);
+                            
+                            if (processed === total) {
+                                showAlert(`Successfully generated download links for ${total} certificates!`, 'success');
+                            }
+                        }).catch(error => {
+                            console.error(`Error generating links for ${certificateId}:`, error);
+                            processed++;
+                        });
+                    });
+                })
+                .catch(error => {
+                    console.error('Error generating download links:', error);
+                    showAlert('Error generating download links: ' + error.message, 'danger');
+                });
+        }
+
+        // Generate download links for a single certificate
+        function generateSingleDownloadLinks(certificateId) {
+            db.collection('certificate_list').doc(certificateId).get()
+                .then(doc => {
+                    if (doc.exists) {
+                        const cert = doc.data();
+                        const links = generateDownloadLinks(certificateId, cert.search_id);
+                        
+                        // Store in Firebase
+                        return db.collection('certificate_list').doc(certificateId).update({
+                            download_links: {
+                                direct_url: links.direct_url,
+                                search_url: links.search_url,
+                                token_url: links.token_url,
+                                api_url: links.api_url,
+                                generated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                                unique_token: links.token_url.split('token=')[1]
+                            }
+                        });
+                    } else {
+                        throw new Error('Certificate not found');
+                    }
+                })
+                .then(() => {
+                    showAlert('Download links generated and stored successfully!', 'success');
+                })
+                .catch(error => {
+                    console.error('Error generating download links:', error);
+                    showAlert('Error generating download links: ' + error.message, 'danger');
+                });
+        }
+
+        // Show download links for certificate
+        function showDownloadLinks(certificateId) {
+            db.collection('certificate_list').doc(certificateId).get()
+                .then(doc => {
+                    if (doc.exists) {
+                        const cert = doc.data();
+                        
+                        // Use stored links if available, otherwise generate new ones
+                        let links;
+                        if (cert.download_links) {
+                            links = cert.download_links;
+                        } else {
+                            links = generateDownloadLinks(certificateId, cert.search_id);
+                        }
+                        
+                        const modalHtml = `
+                            <div class="modal fade" id="downloadLinksModal" tabindex="-1">
+                                <div class="modal-dialog modal-lg">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title">Download Links for ${cert.event_name || 'Certificate'}</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                        </div>
+                                        <div class="modal-body">
+                                            <div class="mb-3">
+                                                <label class="form-label">Certificate Details</label>
+                                                <div class="card p-3 bg-light">
+                                                    <strong>Event:</strong> ${cert.event_name || 'N/A'}<br>
+                                                    <strong>Organizer:</strong> ${cert.organizer_name || 'N/A'}<br>
+                                                    <strong>Search ID:</strong> ${cert.search_id || 'N/A'}<br>
+                                                    <strong>Certificate ID:</strong> ${certificateId}<br>
+                                                    <strong>Unique Token:</strong> ${links.unique_token || 'N/A'}
+                                                </div>
+                                            </div>
+                                            <div class="mb-3">
+                                                <label class="form-label">Download Links</label>
+                                                
+                                                <!-- Direct Download URL -->
+                                                <div class="mb-2">
+                                                    <label class="form-label text-muted small">Direct Download URL (Recommended)</label>
+                                                    <div class="input-group">
+                                                        <input type="text" class="form-control" id="directLink" readonly value="${links.direct_url}">
+                                                        <button class="btn btn-outline-primary" type="button" onclick="copyLink('directLink')">
+                                                            <i class="fas fa-copy"></i> Copy
+                                                        </button>
+                                                    </div>
+                                                    <small class="text-muted">Best for public sharing - opens download page</small>
+                                                </div>
+                                                
+                                                <!-- Token URL -->
+                                                <div class="mb-2">
+                                                    <label class="form-label text-muted small">Unique Token URL</label>
+                                                    <div class="input-group">
+                                                        <input type="text" class="form-control" id="tokenLink" readonly value="${links.token_url}">
+                                                        <button class="btn btn-outline-primary" type="button" onclick="copyLink('tokenLink')">
+                                                            <i class="fas fa-copy"></i> Copy
+                                                        </button>
+                                                    </div>
+                                                    <small class="text-muted">Unique token-based download link</small>
+                                                </div>
+                                                
+                                                <!-- Search ID URL -->
+                                                <div class="mb-2">
+                                                    <label class="form-label text-muted small">Search ID URL</label>
+                                                    <div class="input-group">
+                                                        <input type="text" class="form-control" id="searchLink" readonly value="${links.search_url}">
+                                                        <button class="btn btn-outline-primary" type="button" onclick="copyLink('searchLink')">
+                                                            <i class="fas fa-copy"></i> Copy
+                                                        </button>
+                                                    </div>
+                                                    <small class="text-muted">Uses search ID instead of certificate ID</small>
+                                                </div>
+                                                
+                                                <!-- API URL -->
+                                                <div class="mb-2">
+                                                    <label class="form-label text-muted small">API Download URL</label>
+                                                    <div class="input-group">
+                                                        <input type="text" class="form-control" id="apiLink" readonly value="${links.api_url}">
+                                                        <button class="btn btn-outline-primary" type="button" onclick="copyLink('apiLink')">
+                                                            <i class="fas fa-copy"></i> Copy
+                                                        </button>
+                                                    </div>
+                                                    <small class="text-muted">Direct API endpoint</small>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="modal-footer">
+                                            <button type="button" class="btn btn-primary" onclick="testDownloadLink('${links.direct_url}')">
+                                                <i class="fas fa-external-link-alt"></i> Test Link
+                                            </button>
+                                            <button type="button" class="btn btn-warning" onclick="regenerateDownloadLinks('${certificateId}')">
+                                                <i class="fas fa-sync"></i> Regenerate Links
+                                            </button>
+                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                        
+                        // Remove existing modal if any
+                        const existingModal = document.getElementById('downloadLinksModal');
+                        if (existingModal) {
+                            existingModal.remove();
+                        }
+                        
+                        // Add modal to body
+                        document.body.insertAdjacentHTML('beforeend', modalHtml);
+                        
+                        // Show modal
+                        const modal = new bootstrap.Modal(document.getElementById('downloadLinksModal'));
+                        modal.show();
+                    } else {
+                        showAlert('Certificate not found', 'danger');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading certificate:', error);
+                    showAlert('Error loading certificate: ' + error.message, 'danger');
+                });
+        }
+
+        // Copy link to clipboard
+        function copyLink(inputId) {
+            const input = document.getElementById(inputId);
+            input.select();
+            input.setSelectionRange(0, 99999);
+            
+            try {
+                document.execCommand('copy');
+                showAlert('Link copied to clipboard!', 'success');
+            } catch (err) {
+                navigator.clipboard.writeText(input.value).then(() => {
+                    showAlert('Link copied to clipboard!', 'success');
+                }).catch(() => {
+                    showAlert('Failed to copy link. Please copy manually.', 'warning');
+                });
+            }
+        }
+
+        // Test download link
+        function testDownloadLink(url) {
+            window.open(url, '_blank');
+        }
+
+        // Regenerate download links for a certificate
+        function regenerateDownloadLinks(certificateId) {
+            showAlert('Regenerating download links...', 'info');
+            
+            db.collection('certificate_list').doc(certificateId).get()
+                .then(doc => {
+                    if (doc.exists) {
+                        const cert = doc.data();
+                        const links = generateDownloadLinks(certificateId, cert.search_id);
+                        
+                        return db.collection('certificate_list').doc(certificateId).update({
+                            download_links: {
+                                direct_url: links.direct_url,
+                                search_url: links.search_url,
+                                token_url: links.token_url,
+                                api_url: links.api_url,
+                                generated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                                unique_token: links.token_url.split('token=')[1]
+                            }
+                        });
+                    } else {
+                        throw new Error('Certificate not found');
+                    }
+                })
+                .then(() => {
+                    showAlert('Download links regenerated successfully!', 'success');
+                    // Refresh the modal
+                    setTimeout(() => {
+                        showDownloadLinks(certificateId);
+                    }, 1000);
+                })
+                .catch(error => {
+                    console.error('Error regenerating download links:', error);
+                    showAlert('Error regenerating download links: ' + error.message, 'danger');
+                });
         }
 
         // Show download link format information
