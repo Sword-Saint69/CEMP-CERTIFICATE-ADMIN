@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 
@@ -459,6 +458,12 @@
                                                             image</label>
                                                         <input class="form-control" type="file"
                                                             id="certificateImageFile" accept="image/*">
+                                                    </div>
+                                                    <div class="mt-2">
+                                                        <label for="assetSelector" class="form-label">Or select asset image</label>
+                                                        <select class="form-select" id="assetSelector">
+                                                            <option value="">Select Asset Image</option>
+                                                        </select>
                                                     </div>
                                                 </div>
                                                 <div class="mb-3">
@@ -995,6 +1000,9 @@
             // Test Firebase connection
             testFirebaseConnection();
             
+            // Initialize asset selector
+            initializeAssetSelector();
+            
             // Load certificate templates
             loadCertificateTemplates();
 
@@ -1053,6 +1061,13 @@
 
             // Certificate image upload
             document.getElementById('certificateImageFile').addEventListener('change', handleImageUpload);
+            
+            // Asset selector
+            document.getElementById('assetSelector').addEventListener('change', function(e) {
+                if (e.target.value !== '') {
+                    loadAssetImage(parseInt(e.target.value));
+                }
+            });
 
             // Certificate list tab event listeners
             document.getElementById('saveCertificate').addEventListener('click', saveCertificate);
@@ -1254,40 +1269,19 @@
             // Show loading state
             showAlert('Saving certificate template...', 'info');
 
-            // Upload image to Firebase Storage if a file is selected
+            // Use local assets or uploaded file
             if (imageFile) {
-                uploadImageToStorage(certificateId, imageFile, orientation, textBoxes);
+                // Use the local file URL
+                const localURL = URL.createObjectURL(imageFile);
+                saveTemplateToFirestore(certificateId, localURL, orientation, textBoxes);
             } else {
-                // Use existing URL
-                saveTemplateToFirestore(certificateId, certificateImage || certificateImg.src, orientation, textBoxes);
+                // Use existing URL or asset
+                const imageUrl = certificateImage || certificateImg.src || getAssetImage(0);
+                saveTemplateToFirestore(certificateId, imageUrl, orientation, textBoxes);
             }
         }
 
-        // Upload image to Firebase Storage
-        function uploadImageToStorage(certificateId, imageFile, orientation, textBoxes) {
-            const storageRef = firebase.storage().ref();
-            const imageRef = storageRef.child(`certificate-templates/${certificateId}/${imageFile.name}`);
-            
-            // Show upload progress
-            showAlert('Uploading image to hosting...', 'info');
-            
-            imageRef.put(imageFile)
-                .then(snapshot => {
-                    console.log('Image uploaded successfully');
-                    return snapshot.ref.getDownloadURL();
-                })
-                .then(downloadURL => {
-                    console.log('Image URL:', downloadURL);
-                    showAlert('Image uploaded successfully!', 'success');
-                    
-                    // Save template with hosted image URL
-                    saveTemplateToFirestore(certificateId, downloadURL, orientation, textBoxes);
-                })
-                .catch(error => {
-                    console.error('Error uploading image:', error);
-                    showAlert('Error uploading image: ' + error.message, 'danger');
-                });
-        }
+
 
         // Save template to Firestore
         function saveTemplateToFirestore(certificateId, imageUrl, orientation, textBoxes) {
@@ -1946,36 +1940,50 @@
             // Create a local URL for preview
             const localURL = URL.createObjectURL(file);
             certificateImg.src = localURL;
+            document.getElementById('certificateImage').value = localURL;
             
-            // Upload to Firebase Storage
-            const storageRef = firebase.storage().ref();
-            const imageRef = storageRef.child(`certificate-templates/preview/${Date.now()}_${file.name}`);
+            showAlert('Image loaded successfully!', 'success');
+        }
 
-            // Upload the file
-            const uploadTask = imageRef.put(file);
+        // Load asset images
+        function loadAssetImages() {
+            const assetImages = [
+                'assets/0.png',
+                'assets/1.png',  // Add new assets here
+                'assets/2.png'
+            ];
+            
+            return assetImages;
+        }
 
-            // Listen for state changes
-            uploadTask.on('state_changed',
-                (snapshot) => {
-                    // Progress function
-                    const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-                    console.log('Upload is ' + progress + '% done');
-                    showAlert(`Uploading image... ${Math.round(progress)}%`, 'info');
-                },
-                (error) => {
-                    // Error function
-                    console.error('Error uploading image:', error);
-                    showAlert('Error uploading image: ' + error.message, 'danger');
-                },
-                () => {
-                    // Complete function
-                    uploadTask.snapshot.ref.getDownloadURL().then((downloadURL) => {
-                        console.log('File available at', downloadURL);
-                        document.getElementById('certificateImage').value = downloadURL;
-                        showAlert('Image uploaded to hosting successfully!', 'success');
-                    });
-                }
-            );
+        // Get asset image by index
+        function getAssetImage(index) {
+            const assets = loadAssetImages();
+            return assets[index] || assets[0]; // Default to first image if index not found
+        }
+
+        // Load asset image into template
+        function loadAssetImage(index) {
+            const assetUrl = getAssetImage(index);
+            certificateImg.src = assetUrl;
+            document.getElementById('certificateImage').value = assetUrl;
+            showAlert(`Asset image ${index} loaded successfully!`, 'success');
+        }
+
+        // Initialize asset image selector
+        function initializeAssetSelector() {
+            const assets = loadAssetImages();
+            const assetSelector = document.getElementById('assetSelector');
+            
+            if (assetSelector) {
+                assetSelector.innerHTML = '<option value="">Select Asset Image</option>';
+                assets.forEach((asset, index) => {
+                    const option = document.createElement('option');
+                    option.value = index;
+                    option.textContent = `Asset ${index}`;
+                    assetSelector.appendChild(option);
+                });
+            }
         }
 
         // Adjust zoom
