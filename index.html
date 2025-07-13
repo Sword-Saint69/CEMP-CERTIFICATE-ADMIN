@@ -2028,7 +2028,7 @@
           <button class="btn btn-sm btn-outline-info link-btn" data-id="${cert.id}" title="Download Certificate">
             <i class="fas fa-download"></i>
           </button>
-          ${cert.download_info ? `
+          ${cert.download_link ? `
             <button class="btn btn-sm btn-outline-success view-link-btn" data-id="${cert.id}" title="View Download Link">
               <i class="fas fa-link"></i>
             </button>
@@ -2044,7 +2044,7 @@
                 row.querySelector('.view-btn').addEventListener('click', () => viewCertificate(cert.id));
                 row.querySelector('.edit-btn').addEventListener('click', () => editCertificate(cert.id));
                 row.querySelector('.link-btn').addEventListener('click', () => generateCertificateLink(cert.id));
-                if (cert.download_info) {
+                if (cert.download_link) {
                     row.querySelector('.view-link-btn').addEventListener('click', () => viewDownloadLink(cert.id));
                 }
                 row.querySelector('.delete-btn').addEventListener('click', () => deleteCertificate(cert.id));
@@ -2477,16 +2477,16 @@
                 const downloadLink = canvas.toDataURL('image/png', 1.0);
                 
                 // Store download link in Firebase
-                const downloadData = {
+                // Store download info as separate fields to avoid nested entity issues
+                const updateData = {
                     download_link: downloadLink,
-                    file_name: fileName,
-                    generated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                    download_file_name: fileName,
+                    download_generated_at: firebase.firestore.FieldValue.serverTimestamp(),
                     download_count: 0
                 };
 
-                db.collection('certificate_list').doc(certificateDocId).update({
-                    download_info: downloadData
-                }).then(() => {
+                db.collection('certificate_list').doc(certificateDocId).update(updateData)
+                .then(() => {
                     console.log('Download link stored in Firebase successfully');
                     showAlert('Certificate saved with download link!', 'success');
                 }).catch(error => {
@@ -3288,17 +3288,15 @@
                                 <div class="mt-3">
                                     <h6>Firebase Data Structure:</h6>
                                     <pre class="bg-light p-2 rounded"><code>{
-  "download_info": {
-    "download_link": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...",
-    "direct_download_url": "https://yoursite.com/download.html?id=ABC123",
-    "api_download_url": "https://yoursite.com/api/certificates/ABC123/download",
-    "file_name": "certificate_ABC123.png",
-    "file_size": 245760,
-    "file_format": "PNG",
-    "generated_at": "2024-01-15T10:30:00Z",
-    "download_count": 0,
-    "link_format": "data_url"
-  }
+  "download_link": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...",
+  "direct_download_url": "https://yoursite.com/public-download.html?id=ABC123",
+  "api_download_url": "https://yoursite.com/api/certificates/ABC123/download",
+  "download_file_name": "certificate_ABC123.png",
+  "download_file_size": 245760,
+  "download_file_format": "PNG",
+  "download_generated_at": "2024-01-15T10:30:00Z",
+  "download_count": 0,
+  "download_link_format": "data_url"
 }</code></pre>
                                 </div>
                             </div>
