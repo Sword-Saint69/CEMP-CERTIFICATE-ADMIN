@@ -3036,33 +3036,24 @@
         function storeDownloadLinkInFirebase(certificateId, downloadLink, fileName) {
             // Generate different link formats
             const baseUrl = window.location.origin;
-            const directDownloadUrl = `${baseUrl}/download.html?id=${certificateId}`;
+            const directDownloadUrl = `${baseUrl}/public-download.html?id=${certificateId}`;
             const apiDownloadUrl = `${baseUrl}/api/certificates/${certificateId}/download`;
             
-            const downloadData = {
-                // Data URL format (current - base64 encoded image)
+            // Store download info as separate fields to avoid nested entity issues
+            const updateData = {
                 download_link: downloadLink,
-                
-                // Direct download URL format
                 direct_download_url: directDownloadUrl,
-                
-                // API download URL format
                 api_download_url: apiDownloadUrl,
-                
-                // File information
-                file_name: fileName,
-                file_size: Math.round(downloadLink.length * 0.75), // Approximate size in bytes
-                file_format: 'PNG',
-                
-                // Metadata
-                generated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                download_file_name: fileName,
+                download_file_size: Math.round(downloadLink.length * 0.75),
+                download_file_format: 'PNG',
+                download_generated_at: firebase.firestore.FieldValue.serverTimestamp(),
                 download_count: 0,
-                link_format: 'data_url' // Can be: 'data_url', 'direct_url', 'api_url'
+                download_link_format: 'data_url'
             };
 
-            db.collection('certificate_list').doc(certificateId).update({
-                download_info: downloadData
-            }).then(() => {
+            db.collection('certificate_list').doc(certificateId).update(updateData)
+            .then(() => {
                 console.log('Download link stored in Firebase successfully');
                 console.log('Link formats available:', {
                     data_url: downloadLink.substring(0, 100) + '...',
@@ -3082,9 +3073,9 @@
                 .then(doc => {
                     if (doc.exists) {
                         const cert = doc.data();
-                        const downloadInfo = cert.download_info;
                         
-                        if (downloadInfo) {
+                        // Check if download info exists in the new flat structure
+                        if (cert.download_link) {
                             // Create a modal to show the download link
                             const modalHtml = `
                                 <div class="modal fade" id="downloadLinkModal" tabindex="-1">
@@ -3101,8 +3092,8 @@
                                                         <strong>Event:</strong> ${cert.event_name || 'N/A'}<br>
                                                         <strong>Organizer:</strong> ${cert.organizer_name || 'N/A'}<br>
                                                         <strong>Search ID:</strong> ${cert.search_id || 'N/A'}<br>
-                                                        <strong>File Name:</strong> ${downloadInfo.file_name}<br>
-                                                        <strong>Generated:</strong> ${downloadInfo.generated_at ? new Date(downloadInfo.generated_at.toDate()).toLocaleString() : 'N/A'}
+                                                        <strong>File Name:</strong> ${cert.download_file_name || 'N/A'}<br>
+                                                        <strong>Generated:</strong> ${cert.download_generated_at ? new Date(cert.download_generated_at.toDate()).toLocaleString() : 'N/A'}
                                                     </div>
                                                 </div>
                                                 <div class="mb-3">
@@ -3112,7 +3103,7 @@
                                                     <div class="mb-2">
                                                         <label class="form-label text-muted small">Data URL (Base64)</label>
                                                         <div class="input-group">
-                                                            <input type="text" class="form-control" id="storedDownloadLink" readonly value="${downloadInfo.download_link.substring(0, 100)}...">
+                                                            <input type="text" class="form-control" id="storedDownloadLink" readonly value="${cert.download_link.substring(0, 100)}...">
                                                             <button class="btn btn-outline-secondary" type="button" onclick="copyStoredLink('data_url')">
                                                                 <i class="fas fa-copy"></i> Copy
                                                             </button>
@@ -3124,7 +3115,7 @@
                                                     <div class="mb-2">
                                                         <label class="form-label text-muted small">Direct Download URL</label>
                                                         <div class="input-group">
-                                                            <input type="text" class="form-control" id="directDownloadLink" readonly value="${downloadInfo.direct_download_url || 'Not available'}">
+                                                            <input type="text" class="form-control" id="directDownloadLink" readonly value="${cert.direct_download_url || 'Not available'}">
                                                             <button class="btn btn-outline-secondary" type="button" onclick="copyStoredLink('direct_url')">
                                                                 <i class="fas fa-copy"></i> Copy
                                                             </button>
@@ -3136,7 +3127,7 @@
                                                     <div class="mb-2">
                                                         <label class="form-label text-muted small">API Download URL</label>
                                                         <div class="input-group">
-                                                            <input type="text" class="form-control" id="apiDownloadLink" readonly value="${downloadInfo.api_download_url || 'Not available'}">
+                                                            <input type="text" class="form-control" id="apiDownloadLink" readonly value="${cert.api_download_url || 'Not available'}">
                                                             <button class="btn btn-outline-secondary" type="button" onclick="copyStoredLink('api_url')">
                                                                 <i class="fas fa-copy"></i> Copy
                                                             </button>
@@ -3146,7 +3137,7 @@
                                                 </div>
                                             </div>
                                             <div class="modal-footer">
-                                                <button type="button" class="btn btn-primary" onclick="downloadFromStoredLink('${downloadInfo.download_link}', '${downloadInfo.file_name}')">
+                                                <button type="button" class="btn btn-primary" onclick="downloadFromStoredLink('${cert.download_link}', '${cert.download_file_name}')">
                                                     <i class="fas fa-download"></i> Download Again
                                                 </button>
                                                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
