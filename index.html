@@ -1019,6 +1019,9 @@
 
             // Load template options for dropdowns
             loadCertificateTemplateOptions();
+            
+            // Add test function to window for debugging
+            window.testFirebaseStorageUpload = testFirebaseStorageUpload;
         });
 
         // Test Firebase connection
@@ -1026,7 +1029,9 @@
             console.log('Testing Firebase connection...');
             db.collection('test').doc('connection-test').get()
                 .then(() => {
-                    console.log('Firebase connection successful');
+                    console.log('Firebase Firestore connection successful');
+                    // Also test Firebase Storage
+                    testFirebaseStorageConnection();
                 })
                 .catch(error => {
                     console.error('Firebase connection test failed:', error);
@@ -1041,6 +1046,35 @@
                         showAlert('Firebase connection failed: ' + error.message, 'danger');
                     }
                 });
+        }
+
+        // Test Firebase Storage connection
+        function testFirebaseStorageConnection() {
+            console.log('Testing Firebase Storage connection...');
+            
+            // Create a small test file
+            const testBlob = new Blob(['Firebase Storage Test'], { type: 'text/plain' });
+            const testRef = storage.ref('test/connection-test.txt');
+            
+            testRef.put(testBlob).then((snapshot) => {
+                console.log('Firebase Storage connection successful');
+                // Clean up test file
+                return testRef.delete();
+            }).then(() => {
+                console.log('Firebase Storage test file cleaned up');
+            }).catch(error => {
+                console.error('Firebase Storage connection test failed:', error);
+                console.error('Error code:', error.code);
+                console.error('Error message:', error.message);
+                
+                if (error.code === 'storage/unauthorized') {
+                    showAlert('Firebase Storage access denied. Please check your storage security rules.', 'danger');
+                } else if (error.code === 'storage/retry-limit-exceeded') {
+                    showAlert('Firebase Storage connection timeout. Please check your internet connection.', 'warning');
+                } else {
+                    showAlert('Firebase Storage connection failed: ' + error.message, 'warning');
+                }
+            });
         }
 
         // Setup all event listeners
@@ -2533,8 +2567,11 @@
             }
         }
 
-        // Generate canvas and store link
+        // Generate canvas and store link - IMPROVED VERSION
         function generateCanvasAndStoreLink(tempContainer, certificateDocId, certificateData) {
+            // Show upload progress
+            showAlert('Generating certificate image...', 'info');
+            
             html2canvas(tempContainer, {
                 scale: 2,
                 useCORS: true,
@@ -2546,42 +2583,96 @@
             }).then(canvas => {
                 // Create download link
                 const fileName = `certificate_${certificateData.search_id || certificateData.event_name.replace(/\s+/g, '_')}.png`;
-                const downloadLink = canvas.toDataURL('image/png', 1.0);
                 
-                // Generate unique download links
-                const links = generateDownloadLinks(certificateDocId, certificateData.search_id);
-                
-                // Store download links in Firebase
-                const updateData = {
-                    download_link: downloadLink,
-                    download_file_name: fileName,
-                    download_generated_at: firebase.firestore.FieldValue.serverTimestamp(),
-                    download_count: 0,
-                    download_links: {
-                        direct_url: links.direct_url,
-                        search_url: links.search_url,
-                        token_url: links.token_url,
-                        api_url: links.api_url,
-                        generated_at: firebase.firestore.FieldValue.serverTimestamp(),
-                        unique_token: links.token_url.split('token=')[1]
+                // Upload to Firebase Storage with improved error handling
+                canvas.toBlob((blob) => {
+                    if (!blob) {
+                        showAlert('Error: Failed to generate certificate image blob', 'danger');
+                        return;
                     }
-                };
+                    
+                    // Create unique filename with timestamp
+                    const timestamp = Date.now();
+                    const uniqueFileName = `certificates/${certificateDocId}_${timestamp}.png`;
+                    const storageRef = storage.ref(uniqueFileName);
+                    
+                    // Show upload progress
+                    showAlert('Uploading certificate to Firebase Storage...', 'info');
+                    
+                    // Upload with metadata
+                    const uploadTask = storageRef.put(blob, {
+                        contentType: 'image/png',
+                        customMetadata: {
+                            certificateId: certificateDocId,
+                            eventName: certificateData.event_name || '',
+                            organizerName: certificateData.organizer_name || '',
+                            searchId: certificateData.search_id || '',
+                            generatedAt: new Date().toISOString()
+                        }
+                    });
+                    
+                    // Monitor upload progress
+                    uploadTask.on('state_changed', 
+                        (snapshot) => {
+                            const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                            console.log('Upload progress: ' + progress + '%');
+                        },
+                        (error) => {
+                            console.error('Upload error:', error);
+                            showAlert('Upload failed: ' + error.message, 'danger');
+                        },
+                        () => {
+                            // Upload completed successfully
+                            uploadTask.snapshot.ref.getDownloadURL().then((downloadURL) => {
+                                console.log('Certificate uploaded successfully:', downloadURL);
+                                
+                                // Generate unique download links
+                                const links = generateDownloadLinks(certificateDocId, certificateData.search_id);
+                                
+                                // Store download links in Firebase with enhanced metadata
+                                const updateData = {
+                                    download_storage_url: downloadURL,
+                                    download_storage_path: uniqueFileName,
+                                    download_file_name: fileName,
+                                    download_file_size: blob.size,
+                                    download_file_format: 'PNG',
+                                    download_generated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                                    download_count: 0,
+                                    download_links: {
+                                        direct_url: links.direct_url,
+                                        search_url: links.search_url,
+                                        token_url: links.token_url,
+                                        api_url: links.api_url,
+                                        generated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                                        unique_token: links.token_url.split('token=')[1]
+                                    },
+                                    // Add certificate metadata
+                                    certificate_metadata: {
+                                        event_name: certificateData.event_name,
+                                        organizer_name: certificateData.organizer_name,
+                                        search_id: certificateData.search_id,
+                                        template_id: certificateData.certificate_id,
+                                        generated_timestamp: timestamp
+                                    }
+                                };
 
-                db.collection('certificate_list').doc(certificateDocId).update(updateData)
-                .then(() => {
-                    console.log('Download links stored in Firebase successfully');
-                    console.log('Unique download links generated:', links);
-                    showAlert('Certificate saved with unique download links!', 'success');
-                }).catch(error => {
-                    console.error('Error storing download links:', error);
-                    showAlert('Certificate saved but failed to store download links: ' + error.message, 'warning');
-                });
+                                return db.collection('certificate_list').doc(certificateDocId).update(updateData);
+                            }).then(() => {
+                                console.log('Download links stored in Firebase successfully');
+                                showAlert('Certificate uploaded to Firebase Storage successfully!', 'success');
+                            }).catch(error => {
+                                console.error('Error storing download links:', error);
+                                showAlert('Certificate uploaded but failed to store download links: ' + error.message, 'warning');
+                            });
+                        }
+                    );
+                }, 'image/png', 0.9); // Use 0.9 quality to reduce size
                 
                 // Clean up
                 document.body.removeChild(tempContainer);
             }).catch(error => {
                 console.error('Error generating certificate image:', error);
-                showAlert('Certificate saved but failed to generate download link: ' + error.message, 'warning');
+                showAlert('Error generating certificate: ' + error.message, 'danger');
                 document.body.removeChild(tempContainer);
             });
         }
@@ -3100,9 +3191,8 @@
                 link.click();
                 document.body.removeChild(link);
                 
-                // Store download link in Firebase
-                const downloadLink = canvas.toDataURL('image/png', 1.0);
-                storeDownloadLinkInFirebase(certificateId, downloadLink, fileName);
+                // Store download link in Firebase Storage
+                storeDownloadLinkInFirebase(certificateId, canvas, fileName);
                 
                 // Clean up
                 document.body.removeChild(tempContainer);
@@ -3115,38 +3205,232 @@
             });
         }
 
-        // Store download link in Firebase
-        function storeDownloadLinkInFirebase(certificateId, downloadLink, fileName) {
-            // Generate different link formats
-            const baseUrl = window.location.origin;
-            const directDownloadUrl = `${baseUrl}/public-download.html?id=${certificateId}`;
-            const apiDownloadUrl = `${baseUrl}/api/certificates/${certificateId}/download`;
-            
-            // Store download info as separate fields to avoid nested entity issues
-            const updateData = {
-                download_link: downloadLink,
-                direct_download_url: directDownloadUrl,
-                api_download_url: apiDownloadUrl,
-                download_file_name: fileName,
-                download_file_size: Math.round(downloadLink.length * 0.75),
-                download_file_format: 'PNG',
-                download_generated_at: firebase.firestore.FieldValue.serverTimestamp(),
-                download_count: 0,
-                download_link_format: 'data_url'
-            };
-
-            db.collection('certificate_list').doc(certificateId).update(updateData)
-            .then(() => {
-                console.log('Download link stored in Firebase successfully');
-                console.log('Link formats available:', {
-                    data_url: downloadLink.substring(0, 100) + '...',
-                    direct_url: directDownloadUrl,
-                    api_url: apiDownloadUrl
+        // Store download link in Firebase Storage and Google Drive - IMPROVED VERSION
+        function storeDownloadLinkInFirebase(certificateId, canvas, fileName) {
+            // Convert canvas to blob and upload to Firebase Storage
+            canvas.toBlob((blob) => {
+                if (!blob) {
+                    showAlert('Error: Failed to generate certificate image blob', 'danger');
+                    return;
+                }
+                
+                // Create unique filename with timestamp
+                const timestamp = Date.now();
+                const uniqueFileName = `certificates/${certificateId}_${timestamp}.png`;
+                const storageRef = storage.ref(uniqueFileName);
+                
+                // Show upload progress
+                showAlert('Uploading certificate to Firebase Storage...', 'info');
+                
+                // Upload with metadata
+                const uploadTask = storageRef.put(blob, {
+                    contentType: 'image/png',
+                    customMetadata: {
+                        certificateId: certificateId,
+                        fileName: fileName,
+                        generatedAt: new Date().toISOString()
+                    }
                 });
-                showAlert('Download link saved to database', 'success');
-            }).catch(error => {
-                console.error('Error storing download link:', error);
-                showAlert('Error storing download link: ' + error.message, 'warning');
+                
+                // Monitor upload progress
+                uploadTask.on('state_changed', 
+                    (snapshot) => {
+                        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                        console.log('Upload progress: ' + progress + '%');
+                    },
+                    (error) => {
+                        console.error('Upload error:', error);
+                        showAlert('Upload failed: ' + error.message, 'danger');
+                    },
+                    () => {
+                        // Upload completed successfully
+                        uploadTask.snapshot.ref.getDownloadURL().then((firebaseUrl) => {
+                            console.log('Certificate uploaded to Firebase Storage:', firebaseUrl);
+                            
+                            // Also upload to Google Drive (optional)
+                            return uploadToGoogleDrive(blob, fileName, certificateId).then((googleDriveData) => {
+                                return {
+                                    firebaseUrl: firebaseUrl,
+                                    googleDriveData: googleDriveData
+                                };
+                            });
+                        }).then((urls) => {
+                            // Generate different link formats
+                            const baseUrl = window.location.origin;
+                            const directDownloadUrl = `${baseUrl}/public-download.html?id=${certificateId}`;
+                            const apiDownloadUrl = `${baseUrl}/api/certificates/${certificateId}/download`;
+                            
+                            // Store download info with both Firebase and Google Drive URLs
+                            const updateData = {
+                                download_storage_url: urls.firebaseUrl,
+                                download_storage_path: uniqueFileName,
+                                download_file_name: fileName,
+                                download_file_size: blob.size,
+                                download_file_format: 'PNG',
+                                download_generated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                                download_count: 0,
+                                download_link_format: 'storage_url',
+                                // Google Drive data (if available)
+                                download_google_drive_url: urls.googleDriveData.webViewLink,
+                                download_google_drive_id: urls.googleDriveData.fileId,
+                                download_google_drive_download_url: urls.googleDriveData.downloadUrl,
+                                // Direct download URLs
+                                direct_download_url: directDownloadUrl,
+                                api_download_url: apiDownloadUrl
+                            };
+
+                            return db.collection('certificate_list').doc(certificateId).update(updateData);
+                        }).then(() => {
+                            console.log('Download links stored in Firebase Storage and Google Drive successfully');
+                            showAlert('Certificate uploaded to Firebase Storage and Google Drive!', 'success');
+                        }).catch(error => {
+                            console.error('Error storing download link:', error);
+                            showAlert('Error storing download link: ' + error.message, 'warning');
+                        });
+                    }
+                );
+            }, 'image/png', 0.9); // Use 0.9 quality to reduce size
+        }
+
+        // Upload file to Google Drive
+        function uploadToGoogleDrive(blob, fileName, certificateId) {
+            return new Promise((resolve, reject) => {
+                // Convert blob to base64 for API call
+                const reader = new FileReader();
+                reader.onload = function() {
+                    const base64Data = reader.result.split(',')[1]; // Remove data URL prefix
+                    
+                    // Show loading message
+                    showAlert('Uploading to Google Drive...', 'info');
+                    
+                    // Call our API endpoint to upload to Google Drive
+                    fetch('/api/google-drive/upload', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            fileName: fileName,
+                            mimeType: 'image/png',
+                            base64Data: base64Data,
+                            folderId: getGoogleDriveFolderId() // Get configured folder ID
+                        })
+                    })
+                    .then(response => {
+                        if (!response.ok) {
+                            return response.json().then(errorData => {
+                                throw new Error(errorData.error || `Upload failed: ${response.statusText}`);
+                            });
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        console.log('Google Drive upload successful:', data);
+                        showAlert('Certificate uploaded to Google Drive successfully!', 'success');
+                        resolve(data);
+                    })
+                    .catch(error => {
+                        console.error('Google Drive upload failed:', error);
+                        showAlert('Google Drive upload failed: ' + error.message, 'warning');
+                        // Don't reject, just log the error and continue
+                        resolve({
+                            fileId: null,
+                            webViewLink: null,
+                            downloadUrl: null
+                        });
+                    });
+                };
+                reader.onerror = () => {
+                    const error = new Error('Failed to read file');
+                    showAlert('Error reading file for Google Drive upload', 'danger');
+                    reject(error);
+                };
+                reader.readAsDataURL(blob);
+            });
+        }
+
+        // Get Google Drive folder ID from settings or create default folder
+        function getGoogleDriveFolderId() {
+            // Check if we have a stored folder ID
+            const storedFolderId = localStorage.getItem('googleDriveFolderId');
+            if (storedFolderId) {
+                return storedFolderId;
+            }
+            
+            // Return null to upload to root folder
+            return null;
+        }
+
+        // Check Google Drive API status
+        function checkGoogleDriveStatus() {
+            fetch('/api/google-drive/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'connected') {
+                        console.log('Google Drive API is connected:', data.user);
+                        // Update status indicator
+                        updateGoogleDriveStatus(true, data.user);
+                    } else {
+                        console.error('Google Drive API error:', data.message);
+                        updateGoogleDriveStatus(false, data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Failed to check Google Drive status:', error);
+                    updateGoogleDriveStatus(false, 'Connection failed');
+                });
+        }
+
+        // Update Google Drive status indicator
+        function updateGoogleDriveStatus(isConnected, message) {
+            // You can add a status indicator to the UI here
+            if (isConnected) {
+                console.log('✅ Google Drive: Connected as', message);
+            } else {
+                console.log('❌ Google Drive:', message);
+            }
+        }
+
+        // List Google Drive folders
+        function listGoogleDriveFolders() {
+            return fetch('/api/google-drive/folders')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+                    return data.folders;
+                })
+                .catch(error => {
+                    console.error('Failed to list Google Drive folders:', error);
+                    showAlert('Failed to list Google Drive folders: ' + error.message, 'warning');
+                    return [];
+                });
+        }
+
+        // Create Google Drive folder
+        function createGoogleDriveFolder(folderName = 'Certificates') {
+            return fetch('/api/google-drive/create-folder', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    folderName: folderName
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                showAlert('Google Drive folder created successfully!', 'success');
+                return data;
+            })
+            .catch(error => {
+                console.error('Failed to create Google Drive folder:', error);
+                showAlert('Failed to create Google Drive folder: ' + error.message, 'danger');
+                throw error;
             });
         }
 
@@ -3158,7 +3442,7 @@
                         const cert = doc.data();
                         
                         // Check if download info exists in the new flat structure
-                        if (cert.download_link) {
+                        if (cert.download_storage_url || cert.download_link) {
                             // Create a modal to show the download link
                             const modalHtml = `
                                 <div class="modal fade" id="downloadLinkModal" tabindex="-1">
@@ -3182,16 +3466,16 @@
                                                 <div class="mb-3">
                                                     <label class="form-label">Download Link Formats</label>
                                                     
-                                                    <!-- Data URL Format -->
+                                                    <!-- Firebase Storage URL Format -->
                                                     <div class="mb-2">
-                                                        <label class="form-label text-muted small">Data URL (Base64)</label>
+                                                        <label class="form-label text-muted small">Firebase Storage URL</label>
                                                         <div class="input-group">
-                                                            <input type="text" class="form-control" id="storedDownloadLink" readonly value="${cert.download_link.substring(0, 100)}...">
-                                                            <button class="btn btn-outline-secondary" type="button" onclick="copyStoredLink('data_url')">
+                                                            <input type="text" class="form-control" id="storageDownloadLink" readonly value="${cert.download_storage_url || 'Not available'}">
+                                                            <button class="btn btn-outline-secondary" type="button" onclick="copyStoredLink('storage_url')">
                                                                 <i class="fas fa-copy"></i> Copy
                                                             </button>
                                                         </div>
-                                                        <small class="text-muted">Base64 encoded image data</small>
+                                                        <small class="text-muted">Direct Firebase Storage URL</small>
                                                     </div>
                                                     
                                                     <!-- Direct Download URL -->
@@ -3220,7 +3504,7 @@
                                                 </div>
                                             </div>
                                             <div class="modal-footer">
-                                                <button type="button" class="btn btn-primary" onclick="downloadFromStoredLink('${cert.download_link}', '${cert.download_file_name}')">
+                                                <button type="button" class="btn btn-primary" onclick="downloadFromStoredLink('${cert.download_storage_url || cert.download_link}', '${cert.download_file_name}')">
                                                     <i class="fas fa-download"></i> Download Again
                                                 </button>
                                                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
@@ -3256,13 +3540,13 @@
         }
 
         // Copy stored download link
-        function copyStoredLink(format = 'data_url') {
+        function copyStoredLink(format = 'storage_url') {
             let linkInput;
             let linkText;
             
             switch(format) {
-                case 'data_url':
-                    linkInput = document.getElementById('storedDownloadLink');
+                case 'storage_url':
+                    linkInput = document.getElementById('storageDownloadLink');
                     linkText = linkInput.value;
                     break;
                 case 'direct_url':
@@ -3274,7 +3558,7 @@
                     linkText = linkInput.value;
                     break;
                 default:
-                    linkInput = document.getElementById('storedDownloadLink');
+                    linkInput = document.getElementById('storageDownloadLink');
                     linkText = linkInput.value;
             }
             
@@ -3299,14 +3583,36 @@
         }
 
         // Download from stored link
-        function downloadFromStoredLink(dataUrl, fileName) {
-            const link = document.createElement('a');
-            link.href = dataUrl;
-            link.download = fileName;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            showAlert('Certificate downloaded from stored link!', 'success');
+        function downloadFromStoredLink(url, fileName) {
+            // Check if it's a Firebase Storage URL or base64 data URL
+            if (url.startsWith('https://')) {
+                // Firebase Storage URL - fetch and download
+                fetch(url)
+                    .then(response => response.blob())
+                    .then(blob => {
+                        const link = document.createElement('a');
+                        link.href = URL.createObjectURL(blob);
+                        link.download = fileName;
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        URL.revokeObjectURL(link.href);
+                        showAlert('Certificate downloaded from Firebase Storage!', 'success');
+                    })
+                    .catch(error => {
+                        console.error('Error downloading from Firebase Storage:', error);
+                        showAlert('Error downloading certificate: ' + error.message, 'danger');
+                    });
+            } else {
+                // Base64 data URL - direct download
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = fileName;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                showAlert('Certificate downloaded from stored link!', 'success');
+            }
         }
 
         // Generate unique download links for any certificate
@@ -3775,6 +4081,97 @@
 
         // Utility Functions
 
+        // Firebase Storage utility functions
+        function listFirebaseStorageFiles() {
+            const storageRef = storage.ref('certificates');
+            return storageRef.listAll().then((result) => {
+                console.log('Firebase Storage files:', result.items);
+                return result.items;
+            }).catch(error => {
+                console.error('Error listing Firebase Storage files:', error);
+                showAlert('Error listing storage files: ' + error.message, 'warning');
+                return [];
+            });
+        }
+
+        function deleteFirebaseStorageFile(filePath) {
+            const fileRef = storage.ref(filePath);
+            return fileRef.delete().then(() => {
+                console.log('File deleted from Firebase Storage:', filePath);
+                showAlert('File deleted from Firebase Storage', 'success');
+            }).catch(error => {
+                console.error('Error deleting file from Firebase Storage:', error);
+                showAlert('Error deleting file: ' + error.message, 'danger');
+            });
+        }
+
+        function getFirebaseStorageDownloadURL(filePath) {
+            const fileRef = storage.ref(filePath);
+            return fileRef.getDownloadURL().then((url) => {
+                console.log('Download URL:', url);
+                return url;
+            }).catch(error => {
+                console.error('Error getting download URL:', error);
+                showAlert('Error getting download URL: ' + error.message, 'danger');
+                return null;
+            });
+        }
+
+        // Test Firebase Storage upload function (for debugging)
+        function testFirebaseStorageUpload() {
+            console.log('Testing Firebase Storage upload...');
+            
+            // Create a simple test image (1x1 pixel PNG)
+            const canvas = document.createElement('canvas');
+            canvas.width = 1;
+            canvas.height = 1;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#ff0000';
+            ctx.fillRect(0, 0, 1, 1);
+            
+            canvas.toBlob((blob) => {
+                const timestamp = Date.now();
+                const testFileName = `test/test-upload-${timestamp}.png`;
+                const storageRef = storage.ref(testFileName);
+                
+                showAlert('Testing Firebase Storage upload...', 'info');
+                
+                const uploadTask = storageRef.put(blob, {
+                    contentType: 'image/png',
+                    customMetadata: {
+                        test: 'true',
+                        timestamp: timestamp.toString()
+                    }
+                });
+                
+                uploadTask.on('state_changed', 
+                    (snapshot) => {
+                        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                        console.log('Test upload progress: ' + progress + '%');
+                    },
+                    (error) => {
+                        console.error('Test upload error:', error);
+                        showAlert('Test upload failed: ' + error.message, 'danger');
+                    },
+                    () => {
+                        uploadTask.snapshot.ref.getDownloadURL().then((downloadURL) => {
+                            console.log('Test upload successful:', downloadURL);
+                            showAlert('Firebase Storage upload test successful!', 'success');
+                            
+                            // Clean up test file
+                            setTimeout(() => {
+                                storageRef.delete().then(() => {
+                                    console.log('Test file cleaned up');
+                                }).catch(error => {
+                                    console.error('Error cleaning up test file:', error);
+                                });
+                            }, 5000);
+                        });
+                    }
+                );
+            }, 'image/png');
+        }
+
         // Show alert notification
         function showAlert(message, type) {
             const alertContainer = document.getElementById('alertContainer');
@@ -3928,6 +4325,98 @@
                 previewText.style.height = textBox.style.height;
                 previewText.style.fontSize = textBox.style.fontSize;
             }
+        }
+
+        // Save certificate with download link generation
+        function saveCertificateWithDownloadLink(certificateData, certificateDocId) {
+            console.log('Generating certificate image for download link...');
+            
+            // Create temporary container for certificate generation
+            const tempContainer = document.createElement('div');
+            tempContainer.style.position = 'absolute';
+            tempContainer.style.left = '-9999px';
+            tempContainer.style.top = '-9999px';
+            tempContainer.style.width = '1200px';
+            tempContainer.style.height = '800px';
+            tempContainer.style.backgroundColor = '#ffffff';
+            document.body.appendChild(tempContainer);
+
+            // Create certificate HTML
+            const certificateHtml = generateCertificateHtml(certificateData);
+            tempContainer.innerHTML = certificateHtml;
+
+            // Wait for images to load
+            const images = tempContainer.querySelectorAll('img');
+            const imagePromises = Array.from(images).map(img => {
+                return new Promise((resolve) => {
+                    if (img.complete) {
+                        resolve();
+                    } else {
+                        img.onload = resolve;
+                        img.onerror = resolve;
+                    }
+                });
+            });
+
+            Promise.all(imagePromises).then(() => {
+                // Generate certificate image
+                html2canvas(tempContainer, {
+                    useCORS: true,
+                    allowTaint: true,
+                    backgroundColor: '#ffffff',
+                    width: 1200,
+                    height: 800,
+                    logging: false
+                }).then(canvas => {
+                    // Create download link
+                    const fileName = `certificate_${certificateData.search_id || certificateData.event_name.replace(/\s+/g, '_')}.png`;
+                    
+                    // Convert canvas to blob instead of base64
+                    canvas.toBlob((blob) => {
+                        // Upload blob to Firebase Storage
+                        const storageRef = storage.ref(`certificates/${certificateDocId}.png`);
+                        
+                        storageRef.put(blob).then((snapshot) => {
+                            return snapshot.ref.getDownloadURL();
+                        }).then((downloadURL) => {
+                            // Generate unique download links
+                            const links = generateDownloadLinks(certificateDocId, certificateData.search_id);
+                            
+                            // Store download links in Firebase (without base64 data)
+                            const updateData = {
+                                download_file_name: fileName,
+                                download_generated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                                download_count: 0,
+                                download_storage_url: downloadURL, // Store Firebase Storage URL instead of base64
+                                download_links: {
+                                    direct_url: links.direct_url,
+                                    search_url: links.search_url,
+                                    token_url: links.token_url,
+                                    api_url: links.api_url,
+                                    generated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                                    unique_token: links.token_url.split('token=')[1]
+                                }
+                            };
+
+                            return db.collection('certificate_list').doc(certificateDocId).update(updateData);
+                        }).then(() => {
+                            console.log('Download links stored in Firebase successfully');
+                            console.log('Certificate image uploaded to Firebase Storage');
+                            showAlert('Certificate saved with unique download links!', 'success');
+                        }).catch(error => {
+                            console.error('Error storing download links:', error);
+                            showAlert('Certificate saved but failed to store download links: ' + error.message, 'warning');
+                        });
+                    }, 'image/png', 0.9); // Use 0.9 quality to reduce size
+                    
+                    // Clean up
+                    document.body.removeChild(tempContainer);
+                }).catch(error => {
+                    console.error('Error generating certificate image:', error);
+                    showAlert('Certificate saved but failed to generate download link: ' + error.message, 'warning');
+                    document.body.removeChild(tempContainer);
+                });
+            });
         }
     </script>
 </body>
