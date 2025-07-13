@@ -1020,8 +1020,10 @@
             // Load template options for dropdowns
             loadCertificateTemplateOptions();
             
-            // Add test function to window for debugging
-            window.testFirebaseStorageUpload = testFirebaseStorageUpload;
+                    // Add test function to window for debugging
+        window.testFirebaseStorageUpload = testFirebaseStorageUpload;
+        window.checkFirebaseStorageFiles = listFirebaseStorageFiles;
+        window.verifyCertificateUploads = verifyCertificateUploads;
         });
 
         // Test Firebase connection
@@ -2408,7 +2410,7 @@
             document.getElementById('saveCertificate').removeAttribute('data-id');
         }
 
-        // Save certificate - ENHANCED VERSION
+        // Save certificate - ENHANCED VERSION WITH UPLOAD PROGRESS
         function saveCertificate() {
             const certificateId = document.getElementById('certificate_id').value.trim();
             const eventName = document.getElementById('event_name').value.trim();
@@ -2420,6 +2422,9 @@
                 showAlert('Please fill in all required fields', 'danger');
                 return;
             }
+
+            // Show initial progress
+            showAlert('Saving certificate and generating PNG...', 'info');
 
             // Get custom fields - include both manual and template fields
             const customFields = {};
@@ -2460,7 +2465,7 @@
                 // Update existing certificate
                 db.collection('certificate_list').doc(editId).update(certificateData)
                     .then(() => {
-                        showAlert('Certificate updated successfully', 'success');
+                        showAlert('Certificate data saved, now generating and uploading PNG...', 'success');
                         // Generate and store download link for updated certificate
                         generateAndStoreDownloadLink(editId, certificateData);
                         resetCertificateForm();
@@ -2474,7 +2479,7 @@
                 // Create new certificate
                 db.collection('certificate_list').add(certificateData)
                     .then((docRef) => {
-                        showAlert('Certificate added successfully', 'success');
+                        showAlert('Certificate data saved, now generating and uploading PNG...', 'success');
                         // Generate and store download link for new certificate
                         generateAndStoreDownloadLink(docRef.id, certificateData);
                         resetCertificateForm();
@@ -2567,7 +2572,7 @@
             }
         }
 
-        // Generate canvas and store link - IMPROVED VERSION
+        // Generate canvas and store link - IMPROVED VERSION WITH BETTER PROGRESS
         function generateCanvasAndStoreLink(tempContainer, certificateDocId, certificateData) {
             // Show upload progress
             showAlert('Generating certificate image...', 'info');
@@ -2597,7 +2602,7 @@
                     const storageRef = storage.ref(uniqueFileName);
                     
                     // Show upload progress
-                    showAlert('Uploading certificate to Firebase Storage...', 'info');
+                    showAlert('Uploading certificate PNG to Firebase Storage...', 'info');
                     
                     // Upload with metadata
                     const uploadTask = storageRef.put(blob, {
@@ -2616,6 +2621,11 @@
                         (snapshot) => {
                             const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
                             console.log('Upload progress: ' + progress + '%');
+                            
+                            // Update progress message for user
+                            if (progress < 100) {
+                                showAlert(`Uploading certificate PNG... ${Math.round(progress)}%`, 'info');
+                            }
                         },
                         (error) => {
                             console.error('Upload error:', error);
@@ -2625,6 +2635,8 @@
                             // Upload completed successfully
                             uploadTask.snapshot.ref.getDownloadURL().then((downloadURL) => {
                                 console.log('Certificate uploaded successfully:', downloadURL);
+                                console.log('File size:', blob.size, 'bytes');
+                                console.log('Storage path:', uniqueFileName);
                                 
                                 // Generate unique download links
                                 const links = generateDownloadLinks(certificateDocId, certificateData.search_id);
@@ -2659,7 +2671,7 @@
                                 return db.collection('certificate_list').doc(certificateDocId).update(updateData);
                             }).then(() => {
                                 console.log('Download links stored in Firebase successfully');
-                                showAlert('Certificate uploaded to Firebase Storage successfully!', 'success');
+                                showAlert('✅ Certificate PNG uploaded to Firebase Storage successfully!', 'success');
                             }).catch(error => {
                                 console.error('Error storing download links:', error);
                                 showAlert('Certificate uploaded but failed to store download links: ' + error.message, 'warning');
@@ -4170,6 +4182,40 @@
                     }
                 );
             }, 'image/png');
+        }
+
+        // Verify certificate uploads function
+        function verifyCertificateUploads() {
+            console.log('Checking Firebase Storage for certificate files...');
+            
+            const storageRef = storage.ref('certificates');
+            storageRef.listAll().then((result) => {
+                console.log('Found certificate files in Firebase Storage:');
+                result.items.forEach((item, index) => {
+                    console.log(`${index + 1}. ${item.name}`);
+                    // Get metadata for each file
+                    item.getMetadata().then((metadata) => {
+                        console.log(`   - Size: ${metadata.size} bytes`);
+                        console.log(`   - Created: ${metadata.timeCreated}`);
+                        if (metadata.customMetadata) {
+                            console.log(`   - Event: ${metadata.customMetadata.eventName}`);
+                            console.log(`   - Organizer: ${metadata.customMetadata.organizerName}`);
+                        }
+                    }).catch(error => {
+                        console.log(`   - Error getting metadata: ${error.message}`);
+                    });
+                });
+                
+                if (result.items.length === 0) {
+                    console.log('No certificate files found in Firebase Storage');
+                    showAlert('No certificate files found in Firebase Storage', 'warning');
+                } else {
+                    showAlert(`Found ${result.items.length} certificate files in Firebase Storage`, 'success');
+                }
+            }).catch(error => {
+                console.error('Error listing Firebase Storage files:', error);
+                showAlert('Error checking Firebase Storage: ' + error.message, 'danger');
+            });
         }
 
         // Show alert notification
